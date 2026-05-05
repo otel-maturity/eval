@@ -42,6 +42,9 @@ jobs:
       - name: Set up OTel evaluation cluster
         run: bash scripts/setup-otel-cluster.sh "${{ github.event.inputs.project_name }}"
 
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
       # ── Shared results directory ─────────────────────────────────────────
       # All three agents mount this directory at /app/results so artifacts
       # produced by one agent are visible to the next.
