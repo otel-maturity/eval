@@ -1,0 +1,379 @@
+name: Evaluate CNCF Project OTel Maturity
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: 'CNCF project name (e.g. jaeger)'
+        required: true
+        type: string
+      project_url:
+        description: 'CNCF project GitHub URL (e.g. https://github.com/jaegertracing/jaeger)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Evaluation setup ─────────────────────────────────────────────────
+
+      - name: Install kind
+        run: |
+          sudo curl -fsSL https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64 -o /usr/local/bin/kind
+          sudo chmod +x /usr/local/bin/kind
+          kind version
+
+      - name: Install helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.17.3-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          sudo tar -xzf /tmp/helm.tar.gz --strip-components=1 -C /usr/local/bin linux-amd64/helm
+          helm version
+
+      - name: Set up OTel evaluation cluster
+        run: bash scripts/setup-otel-cluster.sh "${{ github.event.inputs.project_name }}"
+
+      # ── Shared results directory ─────────────────────────────────────────
+      # All three agents mount this directory at /app/results so artifacts
+      # produced by one agent are visible to the next.
+
+      - name: Create shared results directory
+        run: |
+          mkdir -p "${{ github.workspace }}/results/${{ github.event.inputs.project_name }}"
+          chmod -R 777 "${{ github.workspace }}/results"
+
+      # ── Step 1: Install Agent ────────────────────────────────────────────
+
+      - name: Start install-agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          docker run -d --name install-agent \
+            --network=host \
+            -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+            -e DASH0_DATASET="${DASH0_DATASET}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp:/tmp \
+            -v ${{ github.workspace }}/results:/app/results \
+            ghcr.io/${{ github.repository }}/install-agent:latest
+
+      - name: Wait for install-agent to be ready
+        run: |
+          echo "Waiting for install-agent on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://localhost:8080/; then
+              echo "Ready (attempt ${i})"
+              exit 0
+            fi
+            echo "  ${i}/30 — sleeping 3s"
+            sleep 3
+          done
+          echo "install-agent did not start within 90s"
+          docker logs install-agent
+          exit 1
+
+      - name: Run installation
+        id: install
+        continue-on-error: true
+        run: |
+          echo "Installing: ${{ github.event.inputs.project_name }}"
+          set +o pipefail
+          curl -sS -N -X POST http://localhost:8080/api/chat \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d "{\"conversationId\": \"install-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"The kind cluster otel-eval-${{ github.event.inputs.project_name }} is already running with the OTel Collector and test backend deployed. Install the project and generate the INSTALL-PLAN.md.\"}" \
+            --max-time 3600 2>install-curl-errors.txt | tee install-response.txt
+          CURL_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+          if [[ $CURL_EXIT -ne 0 ]]; then
+            echo "## Installation request failed" > install-errors.txt
+            echo "" >> install-errors.txt
+            echo "curl exited with code \`$CURL_EXIT\`" >> install-errors.txt
+            if [[ -s install-curl-errors.txt ]]; then
+              echo '```' >> install-errors.txt
+              cat install-curl-errors.txt >> install-errors.txt
+              echo '```' >> install-errors.txt
+            fi
+            exit $CURL_EXIT
+          fi
+
+      - name: Stop install-agent
+        if: always()
+        run: |
+          docker logs install-agent > install-agent-logs.txt 2>&1 || true
+          docker stop install-agent || true
+          docker rm install-agent || true
+
+      - name: Verify INSTALL-PLAN.md exists
+        id: check_install
+        run: |
+          INSTALL_PLAN="${{ github.workspace }}/results/${{ github.event.inputs.project_name }}/INSTALL-PLAN.md"
+          if [[ -f "$INSTALL_PLAN" ]]; then
+            echo "INSTALL-PLAN.md found ($(wc -l < "$INSTALL_PLAN") lines)"
+            echo "install_plan_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "INSTALL-PLAN.md not found — skipping evaluation and report steps"
+            echo "── Files in results directory:"
+            find "${{ github.workspace }}/results" -type f 2>/dev/null || echo "  (none)"
+            echo "install_plan_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Step 2: Evaluate Agent ───────────────────────────────────────────
+
+      - name: Start evaluate-agent
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          docker run -d --name evaluate-agent \
+            --network=host \
+            -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+            -e DASH0_DATASET="${DASH0_DATASET}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp:/tmp \
+            -v ${{ github.workspace }}/results:/app/results \
+            ghcr.io/${{ github.repository }}/evaluate-agent:latest
+
+      - name: Wait for evaluate-agent to be ready
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        run: |
+          echo "Waiting for evaluate-agent on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://localhost:8080/; then
+              echo "Ready (attempt ${i})"
+              exit 0
+            fi
+            echo "  ${i}/30 — sleeping 3s"
+            sleep 3
+          done
+          echo "evaluate-agent did not start within 90s"
+          docker logs evaluate-agent
+          exit 1
+
+      - name: Run evaluation
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        id: evaluate
+        continue-on-error: true
+        run: |
+          echo "Evaluating: ${{ github.event.inputs.project_name }}"
+          set +o pipefail
+          curl -sS -N -X POST http://localhost:8080/api/chat \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d "{\"conversationId\": \"eval-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"The kind cluster otel-eval-${{ github.event.inputs.project_name }} is already running with the CNCF project installed. Evaluate its OTel maturity and generate the EVALUATION.md.\"}" \
+            --max-time 3600 2>evaluate-curl-errors.txt | tee evaluate-response.txt
+          CURL_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+          if [[ $CURL_EXIT -ne 0 ]]; then
+            echo "## Evaluation request failed" > evaluate-errors.txt
+            echo "" >> evaluate-errors.txt
+            echo "curl exited with code \`$CURL_EXIT\`" >> evaluate-errors.txt
+            if [[ -s evaluate-curl-errors.txt ]]; then
+              echo '```' >> evaluate-errors.txt
+              cat evaluate-curl-errors.txt >> evaluate-errors.txt
+              echo '```' >> evaluate-errors.txt
+            fi
+            exit $CURL_EXIT
+          fi
+
+      - name: Stop evaluate-agent
+        if: always() && steps.check_install.outputs.install_plan_found == 'true'
+        run: |
+          docker logs evaluate-agent > evaluate-agent-logs.txt 2>&1 || true
+          docker stop evaluate-agent || true
+          docker rm evaluate-agent || true
+
+      - name: Verify EVALUATION.md exists
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        id: check_eval
+        run: |
+          EVALUATION="${{ github.workspace }}/results/${{ github.event.inputs.project_name }}/EVALUATION.md"
+          if [[ -f "$EVALUATION" ]]; then
+            echo "EVALUATION.md found ($(wc -l < "$EVALUATION") lines)"
+            echo "evaluation_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "EVALUATION.md not found — skipping report generation"
+            echo "── Files in results directory:"
+            find "${{ github.workspace }}/results" -type f 2>/dev/null || echo "  (none)"
+            echo "evaluation_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Step 3: Report Agent ─────────────────────────────────────────────
+
+      - name: Start report-agent
+        if: steps.check_eval.outputs.evaluation_found == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          docker run -d --name report-agent \
+            --network=host \
+            -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+            -e DASH0_DATASET="${DASH0_DATASET}" \
+            -v ${{ github.workspace }}/results:/app/results \
+            ghcr.io/${{ github.repository }}/report-agent:latest
+
+      - name: Wait for report-agent to be ready
+        if: steps.check_eval.outputs.evaluation_found == 'true'
+        run: |
+          echo "Waiting for report-agent on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://localhost:8080/; then
+              echo "Ready (attempt ${i})"
+              exit 0
+            fi
+            echo "  ${i}/30 — sleeping 3s"
+            sleep 3
+          done
+          echo "report-agent did not start within 90s"
+          docker logs report-agent
+          exit 1
+
+      - name: Run report generation
+        if: steps.check_eval.outputs.evaluation_found == 'true'
+        id: report
+        continue-on-error: true
+        run: |
+          echo "Generating report for: ${{ github.event.inputs.project_name }}"
+          set +o pipefail
+          curl -sS -N -X POST http://localhost:8080/api/chat \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d "{\"conversationId\": \"report-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"Generate the report.html from the evaluation results.\"}" \
+            --max-time 3600 2>report-curl-errors.txt | tee report-response.txt
+          CURL_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+          if [[ $CURL_EXIT -ne 0 ]]; then
+            echo "## Report generation request failed" > report-errors.txt
+            echo "" >> report-errors.txt
+            echo "curl exited with code \`$CURL_EXIT\`" >> report-errors.txt
+            if [[ -s report-curl-errors.txt ]]; then
+              echo '```' >> report-errors.txt
+              cat report-curl-errors.txt >> report-errors.txt
+              echo '```' >> report-errors.txt
+            fi
+            exit $CURL_EXIT
+          fi
+
+      - name: Stop report-agent
+        if: always() && steps.check_eval.outputs.evaluation_found == 'true'
+        run: |
+          docker logs report-agent > report-agent-logs.txt 2>&1 || true
+          docker stop report-agent || true
+          docker rm report-agent || true
+
+      # ── Artifacts ────────────────────────────────────────────────────────
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otel-evaluation-${{ github.event.inputs.project_name }}
+          path: |
+            install-response.txt
+            evaluate-response.txt
+            report-response.txt
+            install-agent-logs.txt
+            evaluate-agent-logs.txt
+            report-agent-logs.txt
+            results/${{ github.event.inputs.project_name }}/
+            /tmp/otel-eval-${{ github.event.inputs.project_name }}/
+          if-no-files-found: warn
+
+      # ── Open PR with results ─────────────────────────────────────────────
+
+      - name: Collect results for PR
+        if: always()
+        id: collect
+        run: |
+          SRC="results/${{ github.event.inputs.project_name }}"
+
+          if [[ ! -d "$SRC" ]] || [[ -z "$(ls -A "$SRC" 2>/dev/null)" ]]; then
+            echo "WARNING: no evaluation files were generated at $SRC"
+            exit 0
+          fi
+
+          echo "── Files included in the pull request:"
+          find "$SRC" -type f -exec ls -lh {} \;
+          echo "files_found=1" >> "$GITHUB_OUTPUT"
+
+          # Check each expected artifact and track missing ones
+          MISSING=""
+          for file in INSTALL-PLAN.md EVALUATION.md report.html; do
+            if [[ -f "$SRC/$file" ]]; then
+              echo "  ✓ $file"
+            else
+              echo "  ✗ $file — MISSING"
+              MISSING="$MISSING\n- \`$file\`"
+            fi
+          done
+
+          if [[ -f "$SRC/report.html" ]]; then
+            echo "report_generated=1" >> "$GITHUB_OUTPUT"
+          else
+            # Append missing artifacts to the error report
+            touch evaluation-errors.txt
+            {
+              echo "## Missing evaluation artifacts"
+              echo ""
+              echo "The following expected files were not generated:"
+              echo -e "$MISSING"
+              echo ""
+            } >> evaluation-errors.txt
+          fi
+
+      - name: Create pull request with results
+        id: create-pr
+        if: always() && steps.collect.outputs.files_found == '1'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: results/${{ github.event.inputs.project_name }}
+          base: main
+          commit-message: "results: add OTel maturity evaluation for ${{ github.event.inputs.project_name }}"
+          title: "OTel maturity report: ${{ github.event.inputs.project_name }}${{ steps.collect.outputs.report_generated != '1' && ' (incomplete)' || '' }}"
+          body: |
+            Automated OTel maturity evaluation for [${{ github.event.inputs.project_name }}](${{ github.event.inputs.project_url }}).
+
+            **Status:** ${{ steps.collect.outputs.report_generated == '1' && 'Completed' || 'Incomplete — the report was not generated. The files included can be reused for another evaluation run.' }}
+
+            All files from the `results/${{ github.event.inputs.project_name }}/` evaluation directory are included.
+
+            Triggered by @${{ github.actor }} via workflow dispatch.
+          add-paths: results/${{ github.event.inputs.project_name }}/*
+
+      - name: Print agent logs on failure
+        if: failure()
+        run: |
+          for log in install-agent-logs.txt evaluate-agent-logs.txt report-agent-logs.txt; do
+            if [[ -s "$log" ]]; then
+              echo "══════════════════════════════════════════════════════════"
+              echo " ${log%.txt} (last 50 lines)"
+              echo "══════════════════════════════════════════════════════════"
+              tail -50 "$log"
+              echo ""
+            fi
+          done
