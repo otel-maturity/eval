@@ -116,9 +116,23 @@ jobs:
             exit $CURL_EXIT
           fi
 
-      - name: Stop install-agent
+      - name: Copy artifacts and stop install-agent
         if: always()
         run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
+
+          echo "── Files inside install-agent container:"
+          docker exec install-agent find /app/.otel-eval -type f 2>/dev/null || true
+          docker exec install-agent find /app/results -type f 2>/dev/null || true
+
+          # Copy from both possible locations inside the container
+          docker cp "install-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+          docker cp "install-agent:/app/results/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+
+          echo "── Files on host after extraction:"
+          find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
+
           docker logs install-agent > install-agent-logs.txt 2>&1 || true
           docker stop install-agent || true
           docker rm install-agent || true
@@ -200,9 +214,23 @@ jobs:
             exit $CURL_EXIT
           fi
 
-      - name: Stop evaluate-agent
+      - name: Copy artifacts and stop evaluate-agent
         if: always() && steps.check_install.outputs.install_plan_found == 'true'
         run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
+
+          echo "── Files inside evaluate-agent container:"
+          docker exec evaluate-agent find /app/.otel-eval -type f 2>/dev/null || true
+          docker exec evaluate-agent find /app/results -type f 2>/dev/null || true
+
+          # Copy from both possible locations inside the container
+          docker cp "evaluate-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+          docker cp "evaluate-agent:/app/results/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+
+          echo "── Files on host after extraction:"
+          find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
+
           docker logs evaluate-agent > evaluate-agent-logs.txt 2>&1 || true
           docker stop evaluate-agent || true
           docker rm evaluate-agent || true
@@ -283,9 +311,23 @@ jobs:
             exit $CURL_EXIT
           fi
 
-      - name: Stop report-agent
+      - name: Copy artifacts and stop report-agent
         if: always() && steps.check_eval.outputs.evaluation_found == 'true'
         run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
+
+          echo "── Files inside report-agent container:"
+          docker exec report-agent find /app/.otel-eval -type f 2>/dev/null || true
+          docker exec report-agent find /app/results -type f 2>/dev/null || true
+
+          # Copy from both possible locations inside the container
+          docker cp "report-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+          docker cp "report-agent:/app/results/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+
+          echo "── Files on host after extraction:"
+          find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
+
           docker logs report-agent > report-agent-logs.txt 2>&1 || true
           docker stop report-agent || true
           docker rm report-agent || true
@@ -400,6 +442,8 @@ jobs:
 
           # Create PR if one doesn't already exist
           EXISTING=$(gh pr list --repo otel-maturity/results --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
           if [[ -z "$EXISTING" ]]; then
             gh pr create --repo otel-maturity/results \
               --title "OTel maturity report: ${{ github.event.inputs.project_name }}${TITLE_SUFFIX}" \
@@ -410,7 +454,7 @@ jobs:
 
           All files from the \`.otel-eval/${{ github.event.inputs.project_name }}/\` evaluation directory are included.
 
-          Triggered by @${{ github.actor }} via workflow dispatch in [otel-maturity/eval](https://github.com/otel-maturity/eval).
+          Triggered by @${{ github.actor }} via workflow dispatch in [otel-maturity/eval](${RUN_URL}).
           EOF
           )" \
               --base main \
