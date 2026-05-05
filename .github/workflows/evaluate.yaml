@@ -46,14 +46,15 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # ── Shared results directory ─────────────────────────────────────────
-      # All three agents mount this directory at /app/results so artifacts
-      # produced by one agent are visible to the next.
+      # ── Shared .otel-eval directory ───────────────────────────────────────
+      # All three agents write to .otel-eval/{projectName}/ inside the
+      # container (per their skill instructions). This host directory is
+      # mounted at /app/.otel-eval so artifacts persist between containers.
 
-      - name: Create shared results directory
+      - name: Create shared .otel-eval directory
         run: |
-          mkdir -p "${{ github.workspace }}/results/${{ github.event.inputs.project_name }}"
-          chmod -R 777 "${{ github.workspace }}/results"
+          mkdir -p "${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}"
+          chmod -R 777 "${{ github.workspace }}/.otel-eval"
 
       # ── Step 1: Install Agent ────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ jobs:
             -e DASH0_DATASET="${DASH0_DATASET}" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
-            -v ${{ github.workspace }}/results:/app/results \
+            -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
             ghcr.io/${{ github.repository }}/install-agent:latest
 
       - name: Wait for install-agent to be ready
@@ -125,14 +126,14 @@ jobs:
       - name: Verify INSTALL-PLAN.md exists
         id: check_install
         run: |
-          INSTALL_PLAN="${{ github.workspace }}/results/${{ github.event.inputs.project_name }}/INSTALL-PLAN.md"
+          INSTALL_PLAN="${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}/INSTALL-PLAN.md"
           if [[ -f "$INSTALL_PLAN" ]]; then
             echo "INSTALL-PLAN.md found ($(wc -l < "$INSTALL_PLAN") lines)"
             echo "install_plan_found=true" >> "$GITHUB_OUTPUT"
           else
             echo "INSTALL-PLAN.md not found — skipping evaluation and report steps"
-            echo "── Files in results directory:"
-            find "${{ github.workspace }}/results" -type f 2>/dev/null || echo "  (none)"
+            echo "── Files in .otel-eval directory:"
+            find "${{ github.workspace }}/.otel-eval" -type f 2>/dev/null || echo "  (none)"
             echo "install_plan_found=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -154,7 +155,7 @@ jobs:
             -e DASH0_DATASET="${DASH0_DATASET}" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
-            -v ${{ github.workspace }}/results:/app/results \
+            -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
             ghcr.io/${{ github.repository }}/evaluate-agent:latest
 
       - name: Wait for evaluate-agent to be ready
@@ -210,14 +211,14 @@ jobs:
         if: steps.check_install.outputs.install_plan_found == 'true'
         id: check_eval
         run: |
-          EVALUATION="${{ github.workspace }}/results/${{ github.event.inputs.project_name }}/EVALUATION.md"
+          EVALUATION="${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}/EVALUATION.md"
           if [[ -f "$EVALUATION" ]]; then
             echo "EVALUATION.md found ($(wc -l < "$EVALUATION") lines)"
             echo "evaluation_found=true" >> "$GITHUB_OUTPUT"
           else
             echo "EVALUATION.md not found — skipping report generation"
-            echo "── Files in results directory:"
-            find "${{ github.workspace }}/results" -type f 2>/dev/null || echo "  (none)"
+            echo "── Files in .otel-eval directory:"
+            find "${{ github.workspace }}/.otel-eval" -type f 2>/dev/null || echo "  (none)"
             echo "evaluation_found=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -237,7 +238,7 @@ jobs:
             -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
             -e DASH0_DATASET="${DASH0_DATASET}" \
-            -v ${{ github.workspace }}/results:/app/results \
+            -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
             ghcr.io/${{ github.repository }}/report-agent:latest
 
       - name: Wait for report-agent to be ready
@@ -303,7 +304,7 @@ jobs:
             install-agent-logs.txt
             evaluate-agent-logs.txt
             report-agent-logs.txt
-            results/${{ github.event.inputs.project_name }}/
+            .otel-eval/${{ github.event.inputs.project_name }}/
             /tmp/otel-eval-${{ github.event.inputs.project_name }}/
           if-no-files-found: warn
 
@@ -313,21 +314,26 @@ jobs:
         if: always()
         id: collect
         run: |
-          SRC="results/${{ github.event.inputs.project_name }}"
+          SRC=".otel-eval/${{ github.event.inputs.project_name }}"
+          DST="results/${{ github.event.inputs.project_name }}"
 
           if [[ ! -d "$SRC" ]] || [[ -z "$(ls -A "$SRC" 2>/dev/null)" ]]; then
             echo "WARNING: no evaluation files were generated at $SRC"
             exit 0
           fi
 
+          # Copy artifacts into results/ for the PR
+          mkdir -p "$DST"
+          cp -r "$SRC"/. "$DST"/
+
           echo "── Files included in the pull request:"
-          find "$SRC" -type f -exec ls -lh {} \;
+          find "$DST" -type f -exec ls -lh {} \;
           echo "files_found=1" >> "$GITHUB_OUTPUT"
 
           # Check each expected artifact and track missing ones
           MISSING=""
           for file in INSTALL-PLAN.md EVALUATION.md report.html; do
-            if [[ -f "$SRC/$file" ]]; then
+            if [[ -f "$DST/$file" ]]; then
               echo "  ✓ $file"
             else
               echo "  ✗ $file — MISSING"
@@ -335,7 +341,7 @@ jobs:
             fi
           done
 
-          if [[ -f "$SRC/report.html" ]]; then
+          if [[ -f "$DST/report.html" ]]; then
             echo "report_generated=1" >> "$GITHUB_OUTPUT"
           else
             # Append missing artifacts to the error report
@@ -349,25 +355,69 @@ jobs:
             } >> evaluation-errors.txt
           fi
 
-      - name: Create pull request with results
+      - name: Generate GitHub App token
+        id: app-token
+        if: always() && steps.collect.outputs.files_found == '1'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: otel-maturity
+          repositories: results
+
+      - name: Push results and create PR on otel-maturity/results
         id: create-pr
         if: always() && steps.collect.outputs.files_found == '1'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          branch: results/${{ github.event.inputs.project_name }}
-          base: main
-          commit-message: "results: add OTel maturity evaluation for ${{ github.event.inputs.project_name }}"
-          title: "OTel maturity report: ${{ github.event.inputs.project_name }}${{ steps.collect.outputs.report_generated != '1' && ' (incomplete)' || '' }}"
-          body: |
-            Automated OTel maturity evaluation for [${{ github.event.inputs.project_name }}](${{ github.event.inputs.project_url }}).
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          BRANCH="results/${{ github.event.inputs.project_name }}"
+          DST="${{ github.event.inputs.project_name }}"
+          STATUS="${{ steps.collect.outputs.report_generated == '1' && 'Completed' || 'Incomplete — the report was not generated. The files included can be reused for another evaluation run.' }}"
+          TITLE_SUFFIX="${{ steps.collect.outputs.report_generated != '1' && ' (incomplete)' || '' }}"
 
-            **Status:** ${{ steps.collect.outputs.report_generated == '1' && 'Completed' || 'Incomplete — the report was not generated. The files included can be reused for another evaluation run.' }}
+          # Clone the results repo using the app token
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/otel-maturity/results.git" /tmp/results-repo
+          cd /tmp/results-repo
 
-            All files from the `results/${{ github.event.inputs.project_name }}/` evaluation directory are included.
+          git config user.name "otel-eval-bot[bot]"
+          git config user.email "otel-eval-bot[bot]@users.noreply.github.com"
 
-            Triggered by @${{ github.actor }} via workflow dispatch.
-          add-paths: results/${{ github.event.inputs.project_name }}/*
+          # Create or reset the branch
+          git checkout -B "$BRANCH"
+
+          # Copy evaluation artifacts
+          mkdir -p "$DST"
+          cp -r "${{ github.workspace }}/results/$DST"/. "$DST"/
+
+          git add "$DST/"
+          git commit -m "results: add OTel maturity evaluation for ${{ github.event.inputs.project_name }}" || {
+            echo "No changes to commit"
+            exit 0
+          }
+
+          git push -f origin "$BRANCH"
+
+          # Create PR if one doesn't already exist
+          EXISTING=$(gh pr list --repo otel-maturity/results --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+          if [[ -z "$EXISTING" ]]; then
+            gh pr create --repo otel-maturity/results \
+              --title "OTel maturity report: ${{ github.event.inputs.project_name }}${TITLE_SUFFIX}" \
+              --body "$(cat <<EOF
+          Automated OTel maturity evaluation for [${{ github.event.inputs.project_name }}](${{ github.event.inputs.project_url }}).
+
+          **Status:** ${STATUS}
+
+          All files from the \`.otel-eval/${{ github.event.inputs.project_name }}/\` evaluation directory are included.
+
+          Triggered by @${{ github.actor }} via workflow dispatch in [otel-maturity/eval](https://github.com/otel-maturity/eval).
+          EOF
+          )" \
+              --base main \
+              --head "$BRANCH"
+          else
+            echo "PR #${EXISTING} already exists — updated branch"
+          fi
 
       - name: Print agent logs on failure
         if: failure()
