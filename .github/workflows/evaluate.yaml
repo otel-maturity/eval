@@ -46,15 +46,23 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # ── Shared .otel-eval directory ───────────────────────────────────────
-      # All three agents write to .otel-eval/{projectName}/ inside the
-      # container (per their skill instructions). This host directory is
-      # mounted at /app/.otel-eval so artifacts persist between containers.
+      # ── Shared directories ────────────────────────────────────────────────
+      # .otel-eval/ is where all three agents write their output (per skills).
+      # results/ is cloned from otel-maturity/results so agents can find
+      # previous evaluation data via their controllers' results/{project}/ check.
 
       - name: Create shared .otel-eval directory
         run: |
           mkdir -p "${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}"
           chmod -R 777 "${{ github.workspace }}/.otel-eval"
+
+      - name: Clone previous results
+        run: |
+          git clone --depth 1 https://github.com/otel-maturity/results.git \
+            "${{ github.workspace }}/previous-results" || {
+            echo "No previous results repo found — starting fresh"
+            mkdir -p "${{ github.workspace }}/previous-results"
+          }
 
       # ── Step 1: Install Agent ────────────────────────────────────────────
 
@@ -74,6 +82,7 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            -v ${{ github.workspace }}/previous-results:/app/results:ro \
             ghcr.io/${{ github.repository }}/install-agent:latest
 
       - name: Wait for install-agent to be ready
@@ -123,12 +132,11 @@ jobs:
           HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
 
           echo "── Files inside install-agent container:"
+          docker exec install-agent find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
           docker exec install-agent find /app/.otel-eval -type f 2>/dev/null || true
-          docker exec install-agent find /app/results -type f 2>/dev/null || true
 
-          # Copy from both possible locations inside the container
+          # Copy from all possible locations inside the container
           docker cp "install-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
-          docker cp "install-agent:/app/results/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
 
           echo "── Files on host after extraction:"
           find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
@@ -170,6 +178,7 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            -v ${{ github.workspace }}/previous-results:/app/results:ro \
             ghcr.io/${{ github.repository }}/evaluate-agent:latest
 
       - name: Wait for evaluate-agent to be ready
@@ -221,12 +230,11 @@ jobs:
           HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
 
           echo "── Files inside evaluate-agent container:"
+          docker exec evaluate-agent find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
           docker exec evaluate-agent find /app/.otel-eval -type f 2>/dev/null || true
-          docker exec evaluate-agent find /app/results -type f 2>/dev/null || true
 
-          # Copy from both possible locations inside the container
+          # Copy from all possible locations inside the container
           docker cp "evaluate-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
-          docker cp "evaluate-agent:/app/results/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
 
           echo "── Files on host after extraction:"
           find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
@@ -267,6 +275,7 @@ jobs:
             -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
             -e DASH0_DATASET="${DASH0_DATASET}" \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            -v ${{ github.workspace }}/previous-results:/app/results:ro \
             ghcr.io/${{ github.repository }}/report-agent:latest
 
       - name: Wait for report-agent to be ready
@@ -317,13 +326,14 @@ jobs:
           PROJECT="${{ github.event.inputs.project_name }}"
           HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
 
-          echo "── Files inside report-agent container:"
+          echo "── Files inside report-agent container (searching all locations):"
+          docker exec report-agent find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
           docker exec report-agent find /app/.otel-eval -type f 2>/dev/null || true
-          docker exec report-agent find /app/results -type f 2>/dev/null || true
 
-          # Copy from both possible locations inside the container
+          # Copy from all possible locations inside the container
           docker cp "report-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
-          docker cp "report-agent:/app/results/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+          # The agent may write report.html to the working directory /app/ directly
+          docker cp "report-agent:/app/report.html" "${HOST_DIR}/report.html" 2>/dev/null || true
 
           echo "── Files on host after extraction:"
           find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"

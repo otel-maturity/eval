@@ -42,26 +42,32 @@ public class ChatController {
                 .append(request.projectName())
                 .append(" (").append(request.projectUrl()).append(").\n");
 
-        // Check if previous results exist on the filesystem
-        Path resultsDir = Path.of("results", request.projectName());
-        if (Files.isDirectory(resultsDir)) {
-            userPrompt.append("A previous evaluation run exists at: ")
-                    .append(resultsDir).append("/\n");
-            userPrompt.append("The following files are available from the previous run:\n");
-            try (var files = Files.walk(resultsDir, 1)) {
-                files.filter(Files::isRegularFile).forEach(file ->
-                        userPrompt.append("- ").append(resultsDir).append("/")
-                                .append(file.getFileName()).append("\n"));
-            } catch (IOException e) {
-                userPrompt.append("(could not list files: ").append(e.getMessage()).append(")\n");
+        // Check if previous results exist on the filesystem (both locations)
+        boolean foundPrevious = false;
+        for (Path dir : new Path[]{
+                Path.of(".otel-eval", request.projectName()),
+                Path.of("results", request.projectName())}) {
+            if (Files.isDirectory(dir)) {
+                foundPrevious = true;
+                userPrompt.append("A previous installation run exists at: ")
+                        .append(dir).append("/\n");
+                userPrompt.append("The following files are available from the previous run:\n");
+                try (var files = Files.walk(dir, 1)) {
+                    files.filter(Files::isRegularFile).forEach(file ->
+                            userPrompt.append("- ").append(dir).append("/")
+                                    .append(file.getFileName()).append("\n"));
+                } catch (IOException e) {
+                    userPrompt.append("(could not list files: ").append(e.getMessage()).append(")\n");
+                }
+                Path installPlan = dir.resolve("INSTALL-PLAN.md");
+                if (Files.isRegularFile(installPlan)) {
+                    userPrompt.append("Review the installation steps in ")
+                            .append(installPlan)
+                            .append(" before proceeding and use them as the basis for the new installation.\n");
+                }
             }
-            Path installPlan = resultsDir.resolve("INSTALL-PLAN.md");
-            if (Files.isRegularFile(installPlan)) {
-                userPrompt.append("Review the installation steps in ")
-                        .append(installPlan)
-                        .append(" before proceeding and use them as the basis for the new installation.\n");
-            }
-        } else {
+        }
+        if (!foundPrevious) {
             userPrompt.append("No previous installation exists for this project.\n");
         }
 
