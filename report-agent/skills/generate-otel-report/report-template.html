@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{PROJECT_NAME}} — OpenTelemetry Maturity Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+            background: #f8f9fc;
+            color: #1a202c;
+            line-height: 1.6;
+        }
+
+        a { color: #3182ce; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* ── Header ── */
+        .site-header {
+            background: linear-gradient(135deg, #1a365d 0%, #2a4a7f 60%, #3182ce 100%);
+            color: white;
+            padding: 48px 32px 40px;
+        }
+        .header-inner { max-width: 960px; margin: 0 auto; }
+        .project-badge {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: rgba(255,255,255,0.15); border-radius: 20px;
+            padding: 4px 14px; font-size: 13px; margin-bottom: 16px;
+        }
+        .project-badge .dot { width: 8px; height: 8px; background: #68d391; border-radius: 50%; }
+        h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+        .header-meta { font-size: 14px; opacity: 0.8; margin-top: 12px; }
+        .header-meta span { margin-right: 20px; }
+
+        /* ── Layout ── */
+        .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+
+        /* ── Section titles ── */
+        .section-title {
+            font-size: 1.3rem; font-weight: 700; color: #1a365d;
+            border-bottom: 2px solid #bee3f8; padding-bottom: 8px; margin-bottom: 24px;
+        }
+
+        /* ── Card ── */
+        .card {
+            background: white; border-radius: 12px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 28px;
+            margin-bottom: 28px;
+        }
+
+        /* ── Radar chart ── */
+        .chart-wrap {
+            display: flex; justify-content: center; align-items: center;
+            padding: 16px 0;
+        }
+        .chart-wrap canvas { max-width: 480px; max-height: 480px; }
+
+        /* ── Score legend ── */
+        .score-legend {
+            display: flex; justify-content: center; gap: 24px; flex-wrap: wrap;
+            margin-top: 16px; font-size: 13px;
+        }
+        .score-legend-item { display: flex; align-items: center; gap: 6px; }
+        .score-legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+        /* ── Summary table ── */
+        .summary-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .summary-table th {
+            background: #ebf8ff; text-align: left; padding: 10px 14px;
+            font-weight: 600; color: #2b6cb0; border-bottom: 2px solid #bee3f8;
+        }
+        .summary-table td { padding: 10px 14px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+        .summary-table tr:last-child td { border-bottom: none; }
+        .summary-table tr:hover td { background: #f7fafc; }
+
+        .level-badge {
+            display: inline-block; padding: 2px 10px; border-radius: 12px;
+            font-size: 12px; font-weight: 700; white-space: nowrap;
+        }
+        .level-0 { background: #fff5f5; color: #c53030; border: 1px solid #feb2b2; }
+        .level-1 { background: #fffaf0; color: #c05621; border: 1px solid #fbd38d; }
+        .level-2 { background: #ebf8ff; color: #2b6cb0; border: 1px solid #bee3f8; }
+        .level-3 { background: #f0fff4; color: #276749; border: 1px solid #9ae6b4; }
+
+        /* ── Signals ── */
+        .signals-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .signal-card {
+            border-radius: 10px; padding: 20px; text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+        .signal-card.flowing { background: #f0fff4; border-color: #9ae6b4; }
+        .signal-card.partial { background: #fffaf0; border-color: #fbd38d; }
+        .signal-card.not-flowing { background: #fff5f5; border-color: #feb2b2; }
+        .signal-icon { font-size: 2rem; margin-bottom: 8px; }
+        .signal-name { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+        .signal-status { font-size: 12px; font-weight: 600; }
+        .signal-card.flowing .signal-status { color: #276749; }
+        .signal-card.partial .signal-status { color: #c05621; }
+        .signal-card.not-flowing .signal-status { color: #c53030; }
+        .signal-detail { font-size: 12px; color: #718096; margin-top: 6px; }
+
+        /* ── Dimension sections ── */
+        .dimension-section { margin-bottom: 20px; }
+        details { border-radius: 10px; border: 1px solid #e2e8f0; overflow: hidden; }
+        summary {
+            display: flex; align-items: center; gap: 12px;
+            padding: 16px 20px; cursor: pointer; background: white;
+            list-style: none; user-select: none;
+            transition: background 0.15s;
+        }
+        summary:hover { background: #f7fafc; }
+        summary::-webkit-details-marker { display: none; }
+        .summary-arrow {
+            margin-left: auto; color: #718096; transition: transform 0.2s;
+        }
+        details[open] .summary-arrow { transform: rotate(90deg); }
+        .dim-title { font-weight: 700; font-size: 15px; flex: 1; }
+        .dim-summary { font-size: 13px; color: #718096; }
+
+        .dim-content {
+            padding: 24px 24px 20px; background: #fafafa;
+            border-top: 1px solid #e2e8f0;
+        }
+        .dim-content h4 {
+            font-size: 13px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.05em; color: #4a5568; margin: 16px 0 8px;
+        }
+        .dim-content h4:first-child { margin-top: 0; }
+        .dim-content p { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
+        .dim-content ul { padding-left: 20px; }
+        .dim-content li { font-size: 14px; color: #4a5568; margin-bottom: 4px; }
+        code {
+            background: #edf2f7; padding: 1px 5px; border-radius: 4px;
+            font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px;
+        }
+
+        .checklist { list-style: none; padding: 0; }
+        .checklist li { display: flex; gap: 8px; font-size: 13px; padding: 3px 0; }
+        .check-pass { color: #276749; font-weight: 700; }
+        .check-fail { color: #c53030; font-weight: 700; }
+
+        .opportunity-box {
+            background: #fffaf0; border-left: 3px solid #f6ad55;
+            padding: 12px 16px; border-radius: 0 8px 8px 0;
+            margin: 12px 0; font-size: 13px; color: #744210;
+        }
+
+        /* ── Key takeaways ── */
+        .takeaways-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .takeaway-box { border-radius: 10px; padding: 20px; }
+        .takeaway-box.strengths { background: #f0fff4; border: 1px solid #9ae6b4; }
+        .takeaway-box.improvements { background: #fffaf0; border: 1px solid #fbd38d; }
+        .takeaway-box.observations { background: #ebf8ff; border: 1px solid #bee3f8; }
+        .takeaway-box h3 { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+        .takeaway-box.strengths h3 { color: #276749; }
+        .takeaway-box.improvements h3 { color: #c05621; }
+        .takeaway-box.observations h3 { color: #2b6cb0; }
+        .takeaway-box ul { padding-left: 18px; }
+        .takeaway-box li { font-size: 13px; margin-bottom: 6px; color: #4a5568; }
+
+        /* ── Footer ── */
+        .site-footer {
+            background: #1a202c; color: #a0aec0;
+            padding: 32px; text-align: center; font-size: 13px; margin-top: 40px;
+        }
+        .site-footer a { color: #63b3ed; }
+
+        @media (max-width: 640px) {
+            .signals-grid { grid-template-columns: 1fr; }
+            .takeaways-grid { grid-template-columns: 1fr; }
+            h1 { font-size: 1.6rem; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ HEADER -->
+<!--
+  TEMPLATE VARIABLES (replace all {{...}} placeholders before use):
+    {{PROJECT_NAME}}        — e.g. "Tekton Pipelines"
+    {{PROJECT_ECOSYSTEM}}   — e.g. "CNCF Graduated Project"
+    {{PROJECT_VERSION}}     — e.g. "v1.11.1"
+    {{EVAL_DATE}}           — e.g. "2026-05-01"
+    {{PROJECT_REPO_URL}}    — e.g. "https://github.com/tektoncd/pipeline"
+    {{PROJECT_REPO_LABEL}}  — e.g. "github.com/tektoncd/pipeline"
+    {{EVAL_NOTES}}          — e.g. "Telemetry collected in kind cluster with OTel Collector file exporter"
+
+  DIMENSION SCORES (0–3 per dimension):
+    {{SCORE_INTEGRATION}}   — Integration Surface
+    {{SCORE_SEMCONV}}       — Semantic Conventions
+    {{SCORE_RESOURCE}}      — Resource Attributes & Configuration
+    {{SCORE_TRACE}}         — Trace Modeling & Context Propagation
+    {{SCORE_MULTISIGNAL}}   — Multi-Signal Observability
+    {{SCORE_QUALITY}}       — Audience & Signal Quality
+    {{SCORE_STABILITY}}     — Stability & Change Management
+-->
+<header class="site-header">
+    <div class="header-inner">
+        <div class="project-badge">
+            <span class="dot"></span>
+            {{PROJECT_ECOSYSTEM}}
+        </div>
+        <h1>{{PROJECT_NAME}}</h1>
+        <p style="font-size:1.1rem; opacity:0.9; margin-top:6px;">
+            OpenTelemetry Support Maturity Report
+        </p>
+        <div class="header-meta">
+            <span>📦 Version: <strong>{{PROJECT_VERSION}}</strong></span>
+            <span>📅 Evaluated: <strong>{{EVAL_DATE}}</strong></span>
+            <span>🔍 Model: <strong>OTel Support Maturity (draft)</strong></span>
+        </div>
+    </div>
+</header>
+
+<div class="container">
+
+    <!-- ═══════════════════════════════════════════════════ RADAR CHART -->
+    <div class="card">
+        <div class="section-title">Maturity Overview</div>
+        <div class="chart-wrap">
+            <canvas id="radarChart"></canvas>
+        </div>
+        <div class="score-legend">
+            <div class="score-legend-item"><div class="score-legend-dot" style="background:#fed7d7"></div> 0 — Instrumented</div>
+            <div class="score-legend-item"><div class="score-legend-dot" style="background:#fbd38d"></div> 1 — OTel-Aligned</div>
+            <div class="score-legend-item"><div class="score-legend-dot" style="background:#90cdf4"></div> 2 — OTel-Native</div>
+            <div class="score-legend-item"><div class="score-legend-dot" style="background:#9ae6b4"></div> 3 — OTel-Optimized</div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════ SUMMARY TABLE -->
+    <div class="card">
+        <div class="section-title">Dimension Scores</div>
+        <table class="summary-table">
+            <thead>
+            <tr>
+                <th>Dimension</th>
+                <th>Level</th>
+                <th>Summary</th>
+            </tr>
+            </thead>
+            <tbody>
+            <!--
+              For each row, set the level-badge class to match the score:
+                level-0 → "0 — Instrumented"
+                level-1 → "1 — OTel-Aligned"
+                level-2 → "2 — OTel-Native"
+                level-3 → "3 — OTel-Optimized"
+              Replace {{SUMMARY_*}} with a one-line description of findings.
+            -->
+            <tr>
+                <td><strong>Integration Surface</strong></td>
+                <td><span class="level-badge level-{{SCORE_INTEGRATION}}">{{SCORE_INTEGRATION}} — {{LEVEL_INTEGRATION}}</span></td>
+                <td>{{SUMMARY_INTEGRATION}}</td>
+            </tr>
+            <tr>
+                <td><strong>Semantic Conventions</strong></td>
+                <td><span class="level-badge level-{{SCORE_SEMCONV}}">{{SCORE_SEMCONV}} — {{LEVEL_SEMCONV}}</span></td>
+                <td>{{SUMMARY_SEMCONV}}</td>
+            </tr>
+            <tr>
+                <td><strong>Resource Attributes &amp; Configuration</strong></td>
+                <td><span class="level-badge level-{{SCORE_RESOURCE}}">{{SCORE_RESOURCE}} — {{LEVEL_RESOURCE}}</span></td>
+                <td>{{SUMMARY_RESOURCE}}</td>
+            </tr>
+            <tr>
+                <td><strong>Trace Modeling &amp; Context Propagation</strong></td>
+                <td><span class="level-badge level-{{SCORE_TRACE}}">{{SCORE_TRACE}} — {{LEVEL_TRACE}}</span></td>
+                <td>{{SUMMARY_TRACE}}</td>
+            </tr>
+            <tr>
+                <td><strong>Multi-Signal Observability</strong></td>
+                <td><span class="level-badge level-{{SCORE_MULTISIGNAL}}">{{SCORE_MULTISIGNAL}} — {{LEVEL_MULTISIGNAL}}</span></td>
+                <td>{{SUMMARY_MULTISIGNAL}}</td>
+            </tr>
+            <tr>
+                <td><strong>Audience &amp; Signal Quality</strong></td>
+                <td><span class="level-badge level-{{SCORE_QUALITY}}">{{SCORE_QUALITY}} — {{LEVEL_QUALITY}}</span></td>
+                <td>{{SUMMARY_QUALITY}}</td>
+            </tr>
+            <tr>
+                <td><strong>Stability &amp; Change Management</strong></td>
+                <td><span class="level-badge level-{{SCORE_STABILITY}}">{{SCORE_STABILITY}} — {{LEVEL_STABILITY}}</span></td>
+                <td>{{SUMMARY_STABILITY}}</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════ SIGNALS -->
+    <!--
+      Each signal card takes one of three CSS classes:
+        flowing      → signal confirmed working end-to-end
+        partial      → signal exists but incomplete / partially configured
+        not-flowing  → signal absent or not exported via OTel
+
+      Update the icon, status line, and detail text for each signal.
+    -->
+    <div class="card">
+        <div class="section-title">Signal Status</div>
+        <div class="signals-grid">
+
+            <!-- TRACES -->
+            <div class="signal-card {{TRACES_STATUS_CLASS}}">
+                <div class="signal-icon">🔍</div>
+                <div class="signal-name">Traces</div>
+                <div class="signal-status">{{TRACES_STATUS_ICON}} {{TRACES_STATUS_LABEL}}</div>
+                <div class="signal-detail">{{TRACES_DETAIL}}</div>
+            </div>
+
+            <!-- METRICS -->
+            <div class="signal-card {{METRICS_STATUS_CLASS}}">
+                <div class="signal-icon">📊</div>
+                <div class="signal-name">Metrics</div>
+                <div class="signal-status">{{METRICS_STATUS_ICON}} {{METRICS_STATUS_LABEL}}</div>
+                <div class="signal-detail">{{METRICS_DETAIL}}</div>
+            </div>
+
+            <!-- LOGS -->
+            <div class="signal-card {{LOGS_STATUS_CLASS}}">
+                <div class="signal-icon">📋</div>
+                <div class="signal-name">Logs</div>
+                <div class="signal-status">{{LOGS_STATUS_ICON}} {{LOGS_STATUS_LABEL}}</div>
+                <div class="signal-detail">{{LOGS_DETAIL}}</div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════ DIMENSIONS -->
+    <!--
+      Each <details> block follows the same structure:
+        1. <summary> — level badge, dimension title, one-line summary
+        2. .dim-content — What we observed / What's working well / Opportunities / Checklist
+
+      The first dimension is open by default (open attribute on <details>).
+      Remove or add the `open` attribute as needed.
+
+      For each dimension:
+        - Update the level-badge class and score number
+        - Replace {{DIM_*}} placeholders with project-specific findings
+        - Add/remove <li> items and <div class="opportunity-box"> blocks as needed
+        - Add/remove checklist items inside .checklist
+    -->
+    <div class="section-title" style="margin-top:8px;">Dimension Details</div>
+
+    <!-- 1. Integration Surface -->
+    <div class="dimension-section">
+        <details open>
+            <summary>
+                <span class="level-badge level-{{SCORE_INTEGRATION}}">{{SCORE_INTEGRATION}}</span>
+                <span class="dim-title">Integration Surface</span>
+                <span class="dim-summary">{{SUMMARY_INTEGRATION}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM1_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM1_STRENGTH_1}}</li>
+                    <li>{{DIM1_STRENGTH_2}}</li>
+                    <!-- Add more <li> items as needed -->
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM1_OPPORTUNITY_1_TITLE}}</strong> — {{DIM1_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM1_OPPORTUNITY_2_TITLE}}</strong> — {{DIM1_OPPORTUNITY_2_DETAIL}}
+                </div>
+                <!-- Add more opportunity-box blocks as needed -->
+
+                <h4>Checklist</h4>
+                <ul class="checklist">
+                    <li><span class="check-pass">✅</span> {{DIM1_CHECK_PASS_1}}</li>
+                    <li><span class="check-pass">✅</span> {{DIM1_CHECK_PASS_2}}</li>
+                    <li><span class="check-fail">❌</span> {{DIM1_CHECK_FAIL_1}}</li>
+                    <li><span class="check-fail">❌</span> {{DIM1_CHECK_FAIL_2}}</li>
+                    <!-- Add or remove checklist items as needed -->
+                </ul>
+            </div>
+        </details>
+    </div>
+
+    <!-- 2. Semantic Conventions -->
+    <div class="dimension-section">
+        <details>
+            <summary>
+                <span class="level-badge level-{{SCORE_SEMCONV}}">{{SCORE_SEMCONV}}</span>
+                <span class="dim-title">Semantic Conventions</span>
+                <span class="dim-summary">{{SUMMARY_SEMCONV}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM2_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM2_STRENGTH_1}}</li>
+                    <li>{{DIM2_STRENGTH_2}}</li>
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM2_OPPORTUNITY_1_TITLE}}</strong> — {{DIM2_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM2_OPPORTUNITY_2_TITLE}}</strong> — {{DIM2_OPPORTUNITY_2_DETAIL}}
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- 3. Resource Attributes & Configuration -->
+    <div class="dimension-section">
+        <details>
+            <summary>
+                <span class="level-badge level-{{SCORE_RESOURCE}}">{{SCORE_RESOURCE}}</span>
+                <span class="dim-title">Resource Attributes &amp; Configuration</span>
+                <span class="dim-summary">{{SUMMARY_RESOURCE}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM3_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM3_STRENGTH_1}}</li>
+                    <li>{{DIM3_STRENGTH_2}}</li>
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM3_OPPORTUNITY_1_TITLE}}</strong> — {{DIM3_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM3_OPPORTUNITY_2_TITLE}}</strong> — {{DIM3_OPPORTUNITY_2_DETAIL}}
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- 4. Trace Modeling & Context Propagation -->
+    <div class="dimension-section">
+        <details>
+            <summary>
+                <span class="level-badge level-{{SCORE_TRACE}}">{{SCORE_TRACE}}</span>
+                <span class="dim-title">Trace Modeling &amp; Context Propagation</span>
+                <span class="dim-summary">{{SUMMARY_TRACE}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM4_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM4_STRENGTH_1}}</li>
+                    <li>{{DIM4_STRENGTH_2}}</li>
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM4_OPPORTUNITY_1_TITLE}}</strong> — {{DIM4_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM4_OPPORTUNITY_2_TITLE}}</strong> — {{DIM4_OPPORTUNITY_2_DETAIL}}
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- 5. Multi-Signal Observability -->
+    <div class="dimension-section">
+        <details>
+            <summary>
+                <span class="level-badge level-{{SCORE_MULTISIGNAL}}">{{SCORE_MULTISIGNAL}}</span>
+                <span class="dim-title">Multi-Signal Observability</span>
+                <span class="dim-summary">{{SUMMARY_MULTISIGNAL}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM5_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM5_STRENGTH_1}}</li>
+                    <li>{{DIM5_STRENGTH_2}}</li>
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM5_OPPORTUNITY_1_TITLE}}</strong> — {{DIM5_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM5_OPPORTUNITY_2_TITLE}}</strong> — {{DIM5_OPPORTUNITY_2_DETAIL}}
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- 6. Audience & Signal Quality -->
+    <div class="dimension-section">
+        <details>
+            <summary>
+                <span class="level-badge level-{{SCORE_QUALITY}}">{{SCORE_QUALITY}}</span>
+                <span class="dim-title">Audience &amp; Signal Quality</span>
+                <span class="dim-summary">{{SUMMARY_QUALITY}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM6_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM6_STRENGTH_1}}</li>
+                    <li>{{DIM6_STRENGTH_2}}</li>
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM6_OPPORTUNITY_1_TITLE}}</strong> — {{DIM6_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM6_OPPORTUNITY_2_TITLE}}</strong> — {{DIM6_OPPORTUNITY_2_DETAIL}}
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- 7. Stability & Change Management -->
+    <div class="dimension-section">
+        <details>
+            <summary>
+                <span class="level-badge level-{{SCORE_STABILITY}}">{{SCORE_STABILITY}}</span>
+                <span class="dim-title">Stability &amp; Change Management</span>
+                <span class="dim-summary">{{SUMMARY_STABILITY}}</span>
+                <span class="summary-arrow">▶</span>
+            </summary>
+            <div class="dim-content">
+                <h4>What we observed</h4>
+                <p>{{DIM7_OBSERVED}}</p>
+
+                <h4>What's working well</h4>
+                <ul>
+                    <li>{{DIM7_STRENGTH_1}}</li>
+                    <li>{{DIM7_STRENGTH_2}}</li>
+                </ul>
+
+                <h4>Opportunities</h4>
+                <div class="opportunity-box">
+                    <strong>{{DIM7_OPPORTUNITY_1_TITLE}}</strong> — {{DIM7_OPPORTUNITY_1_DETAIL}}
+                </div>
+                <div class="opportunity-box">
+                    <strong>{{DIM7_OPPORTUNITY_2_TITLE}}</strong> — {{DIM7_OPPORTUNITY_2_DETAIL}}
+                </div>
+            </div>
+        </details>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════ KEY TAKEAWAYS -->
+    <!--
+      Fill in 2–4 bullet points per box.
+      The "observations" box spans full width via style="margin-top:16px;".
+    -->
+    <div class="card" style="margin-top:32px;">
+        <div class="section-title">Key Takeaways</div>
+        <div class="takeaways-grid">
+            <div class="takeaway-box strengths">
+                <h3>🟢 Strengths</h3>
+                <ul>
+                    <li><strong>{{STRENGTH_1_TITLE}}</strong> — {{STRENGTH_1_DETAIL}}</li>
+                    <li><strong>{{STRENGTH_2_TITLE}}</strong> — {{STRENGTH_2_DETAIL}}</li>
+                    <li><strong>{{STRENGTH_3_TITLE}}</strong> — {{STRENGTH_3_DETAIL}}</li>
+                    <!-- Add or remove items as needed -->
+                </ul>
+            </div>
+            <div class="takeaway-box improvements">
+                <h3>🟡 Priority Improvements</h3>
+                <ul>
+                    <li><strong>{{IMPROVEMENT_1_TITLE}}</strong> — {{IMPROVEMENT_1_DETAIL}}</li>
+                    <li><strong>{{IMPROVEMENT_2_TITLE}}</strong> — {{IMPROVEMENT_2_DETAIL}}</li>
+                    <li><strong>{{IMPROVEMENT_3_TITLE}}</strong> — {{IMPROVEMENT_3_DETAIL}}</li>
+                    <li><strong>{{IMPROVEMENT_4_TITLE}}</strong> — {{IMPROVEMENT_4_DETAIL}}</li>
+                    <!-- Add or remove items as needed -->
+                </ul>
+            </div>
+        </div>
+        <div class="takeaway-box observations" style="margin-top:16px;">
+            <h3>🔵 Notable Observations</h3>
+            <ul>
+                <li><strong>{{OBSERVATION_1_TITLE}}</strong> — {{OBSERVATION_1_DETAIL}}</li>
+                <li><strong>{{OBSERVATION_2_TITLE}}</strong> — {{OBSERVATION_2_DETAIL}}</li>
+                <li><strong>{{OBSERVATION_3_TITLE}}</strong> — {{OBSERVATION_3_DETAIL}}</li>
+                <!-- Add or remove items as needed -->
+            </ul>
+        </div>
+    </div>
+
+</div><!-- /container -->
+
+<footer class="site-footer">
+    <p>
+        Evaluated using the <strong>OpenTelemetry Support Maturity Model for CNCF Projects</strong> (draft) ·
+        {{PROJECT_NAME}} <a href="{{PROJECT_REPO_URL}}">{{PROJECT_REPO_LABEL}}</a> ·
+        {{EVAL_NOTES}}
+    </p>
+</footer>
+
+<script>
+    /*
+      Radar chart data — update the `data` array to match the seven dimension scores.
+      Order must match the labels array exactly:
+        [Integration Surface, Semantic Conventions, Resource Attrs, Trace Modeling,
+         Multi-Signal, Audience & Quality, Stability & Change Mgmt]
+
+      Replace the placeholder values (0) with the actual scores (0–3).
+    */
+    const DIMENSION_SCORES = [
+        /* Integration Surface        */ {{SCORE_INTEGRATION}},
+    /* Semantic Conventions       */ {{SCORE_SEMCONV}},
+    /* Resource Attrs & Config    */ {{SCORE_RESOURCE}},
+    /* Trace Modeling & Propagation */ {{SCORE_TRACE}},
+    /* Multi-Signal Observability */ {{SCORE_MULTISIGNAL}},
+    /* Audience & Signal Quality  */ {{SCORE_QUALITY}},
+    /* Stability & Change Mgmt    */ {{SCORE_STABILITY}},
+    ];
+
+    const PROJECT_LABEL = '{{PROJECT_NAME}} {{PROJECT_VERSION}}';
+
+    const ctx = document.getElementById('radarChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'radar',
+        data: {
+            labels: [
+                'Integration Surface',
+                'Semantic Conventions',
+                'Resource Attrs\n& Configuration',
+                'Trace Modeling\n& Propagation',
+                'Multi-Signal\nObservability',
+                'Audience &\nSignal Quality',
+                'Stability &\nChange Mgmt'
+            ],
+            datasets: [{
+                label: PROJECT_LABEL,
+                data: DIMENSION_SCORES,
+                backgroundColor: 'rgba(49, 130, 206, 0.15)',
+                borderColor: 'rgba(49, 130, 206, 0.9)',
+                borderWidth: 2.5,
+                pointBackgroundColor: 'rgba(49, 130, 206, 1)',
+                pointBorderColor: '#fff',
+                pointHoverBackgroundColor: '#fff',
+                pointHoverBorderColor: 'rgba(49, 130, 206, 1)',
+                pointRadius: 5,
+                pointHoverRadius: 7,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                r: {
+                    min: 0,
+                    max: 3,
+                    ticks: {
+                        stepSize: 1,
+                        callback: (v) => ['Instrumented','Aligned','Native','Optimized'][v] || v,
+                        font: { size: 10 },
+                        color: '#718096',
+                        backdropColor: 'transparent',
+                    },
+                    grid: { color: 'rgba(0,0,0,0.08)' },
+                    angleLines: { color: 'rgba(0,0,0,0.1)' },
+                    pointLabels: {
+                        font: { size: 12, weight: '600' },
+                        color: '#2d3748',
+                    }
+                }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const names = ['Instrumented','OTel-Aligned','OTel-Native','OTel-Optimized'];
+                            return ` Level ${ctx.raw} — ${names[ctx.raw]}`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+</script>
+</body>
+</html>
