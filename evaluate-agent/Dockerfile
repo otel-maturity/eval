@@ -62,6 +62,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 
 WORKDIR /app
 COPY --from=builder /app/target/evaluate-agent-*.jar app.jar
+COPY --from=builder /app/skills/ /app/skills/
 
 EXPOSE 8080
 

@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /app/target/report-agent-*.jar app.jar
+COPY --from=builder /app/skills/ /app/skills/
 
 EXPOSE 8080
 

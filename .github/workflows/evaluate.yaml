@@ -473,6 +473,20 @@ jobs:
             echo "PR #${EXISTING} already exists — updated branch"
           fi
 
+      - name: Verify report.html was generated
+        if: always() && steps.collect.outputs.files_found == '1'
+        run: |
+          if [[ "${{ steps.collect.outputs.report_generated }}" != "1" ]]; then
+            echo "::error::report.html was not generated — the evaluation is incomplete"
+            echo ""
+            echo "Expected artifacts: INSTALL-PLAN.md, EVALUATION.md, report.html"
+            echo "Missing: report.html"
+            echo ""
+            echo "Check the report-agent logs in the uploaded artifacts for details."
+            exit 1
+          fi
+          echo "All expected artifacts were generated successfully"
+
       - name: Print agent logs on failure
         if: failure()
         run: |
