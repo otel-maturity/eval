@@ -7,9 +7,9 @@ COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 RUN ./mvnw dependency:go-offline --batch-mode -q
 
-# Build the fat JAR (skills/ is bundled as a classpath resource via pom.xml)
+# Build the fat JAR (.agents/skills/ is bundled as a classpath resource via pom.xml)
 COPY src/ src/
-COPY skills/ skills/
+COPY .agents/ .agents/
 RUN ./mvnw package -DskipTests --batch-mode -q
 
 # ---- Runtime stage ----
@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /app/target/report-agent-*.jar app.jar
-COPY --from=builder /app/skills/ /app/skills/
+COPY --from=builder /app/.agents/skills/ /app/skills/
 
 EXPOSE 8080
 

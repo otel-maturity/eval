@@ -43,7 +43,7 @@ public class AgentConfig {
                         steps that were taken must be sent as the last message. Use ++++ as a separator.
                         """)
                 .defaultToolCallbacks(SkillsTool.builder()
-                        .addSkillsResource(resourceLoader.getResource("classpath:skills"))
+                        .addSkillsResource(resourceLoader.getResource("classpath:.agents/skills"))
                         .build())
                 .defaultTools(FileSystemTools.builder().build())
                 .defaultTools(ShellTools.builder().build())

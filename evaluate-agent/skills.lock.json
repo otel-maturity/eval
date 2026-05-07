@@ -1,0 +1,24 @@
+{
+  "lockfileVersion": 1,
+  "generatedAt": "2026-05-07T14:40:45Z",
+  "skills": [
+    {
+      "name": "evaluate-otel-maturity",
+      "path": ".agents/skills/evaluate-otel-maturity",
+      "source": {
+        "registry": "ghcr.io",
+        "repository": "otel-maturity/evaluate-otel-maturity",
+        "tag": "0.0.1",
+        "digest": "sha256:e7b61e20f246b30904af9497cd894cb6d462a35de8b8c77757820709bda1ee28",
+        "ref": "ghcr.io/otel-maturity/evaluate-otel-maturity:0.0.1@sha256:e7b61e20f246b30904af9497cd894cb6d462a35de8b8c77757820709bda1ee28"
+      },
+      "installedAt": "2026-05-07T14:40:45Z",
+      "additionalInstalledPaths": [
+        ".claude/skills/evaluate-otel-maturity",
+        ".codex/skills/evaluate-otel-maturity",
+        ".cursor/skills/evaluate-otel-maturity",
+        ".gemini/skills/evaluate-otel-maturity"
+      ]
+    }
+  ]
+}

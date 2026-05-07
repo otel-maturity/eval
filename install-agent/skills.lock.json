@@ -1,0 +1,24 @@
+{
+  "lockfileVersion": 1,
+  "generatedAt": "2026-05-07T14:42:15Z",
+  "skills": [
+    {
+      "name": "install-cncf-project",
+      "path": ".agents/skills/install-cncf-project",
+      "source": {
+        "registry": "ghcr.io",
+        "repository": "otel-maturity/install-cncf-project",
+        "tag": "0.0.1",
+        "digest": "sha256:40bb6d462249ca4da580b553baf1664ea3191ad1c2bd438d8a10ed509a1090ae",
+        "ref": "ghcr.io/otel-maturity/install-cncf-project:0.0.1@sha256:40bb6d462249ca4da580b553baf1664ea3191ad1c2bd438d8a10ed509a1090ae"
+      },
+      "installedAt": "2026-05-07T14:42:15Z",
+      "additionalInstalledPaths": [
+        ".claude/skills/install-cncf-project",
+        ".codex/skills/install-cncf-project",
+        ".cursor/skills/install-cncf-project",
+        ".gemini/skills/install-cncf-project"
+      ]
+    }
+  ]
+}

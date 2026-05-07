@@ -1,0 +1,15 @@
+{
+  "skills": [
+    {
+      "name": "install-cncf-project",
+      "source": "ghcr.io/otel-maturity/install-cncf-project",
+      "version": "0.0.1",
+      "additionalBasePaths": [
+        ".claude/skills",
+        ".codex/skills",
+        ".cursor/skills",
+        ".gemini/skills"
+      ]
+    }
+  ]
+}

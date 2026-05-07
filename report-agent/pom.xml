@@ -86,10 +86,8 @@
                 <directory>src/main/resources</directory>
             </resource>
             <resource>
-                <directory>.</directory>
-                <includes>
-                    <include>skills/**</include>
-                </includes>
+                <directory>.agents/skills</directory>
+                <targetPath>.agents/skills</targetPath>
             </resource>
         </resources>
         <plugins>

@@ -1,6 +1,12 @@
 # Compiled class file
 *.class
 
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+
 # Log file
 *.log
 

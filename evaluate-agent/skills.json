@@ -1,0 +1,15 @@
+{
+  "skills": [
+    {
+      "name": "evaluate-otel-maturity",
+      "source": "ghcr.io/otel-maturity/evaluate-otel-maturity",
+      "version": "0.0.1",
+      "additionalBasePaths": [
+        ".claude/skills",
+        ".codex/skills",
+        ".cursor/skills",
+        ".gemini/skills"
+      ]
+    }
+  ]
+}
