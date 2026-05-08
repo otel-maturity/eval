@@ -31,7 +31,7 @@ public class AgentConfig {
                            This step MUST produce a report.html file. The task is NOT
                            complete until report.html has been generated.
 
-                        Use the report-template.html as a template to generate the final report.
+                        Use the assets/report-template.html as a template to generate the final report.
                         
                         When using a skill or a tool always notify the user about the action
                         by sending regular messages with the progress of the report generation.
