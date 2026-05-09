@@ -1,6 +1,6 @@
 {
   "lockfileVersion": 1,
-  "generatedAt": "2026-05-07T14:42:35Z",
+  "generatedAt": "2026-05-08T13:21:19Z",
   "skills": [
     {
       "name": "generate-otel-report",
@@ -8,11 +8,11 @@
       "source": {
         "registry": "ghcr.io",
         "repository": "otel-maturity/generate-otel-report",
-        "tag": "0.0.1",
-        "digest": "sha256:aed27c8fea4d40dcd1b6bf7c0777473327026798fbdad887bf64d7dc2c086872",
-        "ref": "ghcr.io/otel-maturity/generate-otel-report:0.0.1@sha256:aed27c8fea4d40dcd1b6bf7c0777473327026798fbdad887bf64d7dc2c086872"
+        "tag": "0.0.4",
+        "digest": "sha256:a5b06072604c0f34370e9d93b7e29fbd753b4eabdc2224544e9fb402f855c64e",
+        "ref": "ghcr.io/otel-maturity/generate-otel-report:0.0.4@sha256:a5b06072604c0f34370e9d93b7e29fbd753b4eabdc2224544e9fb402f855c64e"
       },
-      "installedAt": "2026-05-07T14:42:35Z",
+      "installedAt": "2026-05-08T13:21:19Z",
       "additionalInstalledPaths": [
         ".claude/skills/generate-otel-report",
         ".codex/skills/generate-otel-report",
