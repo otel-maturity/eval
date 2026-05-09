@@ -28,15 +28,18 @@ public class AgentConfig {
                         file that contains the evaluation results.
 
                         GENERATE the final report using the "generate-otel-report" skill.
-                           This step MUST produce a report.html file. The task is NOT
-                           complete until report.html has been generated.
+                           Follow ALL steps in the skill (SKILL.md). The skill produces TWO files
+                           and the task is NOT complete until BOTH exist:
+                             1. report.html — full HTML report (from assets/report-template.html)
+                             2. project-card.html — project card summary (from assets/PROJECT-CARD-TEMPLATE.html)
+                           Do not stop after report.html. Proceed to Step 3 of the skill and
+                           produce project-card.html as well.
 
-                        Use the assets/report-template.html as a template to generate the final report.
-                        
                         When using a skill or a tool always notify the user about the action
                         by sending regular messages with the progress of the report generation.
 
-                        The report generation must finish with the report.html file.
+                        The report generation is only complete once both report.html
+                        and project-card.html have been written.
 
                         When the report is generated, a message to the user about the
                         steps that were taken must be sent as the last message. Use ++++ as a separator.

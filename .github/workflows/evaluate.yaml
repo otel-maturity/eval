@@ -304,7 +304,7 @@ jobs:
           curl -sS -N -X POST http://localhost:8080/api/chat \
             -H "Content-Type: application/json" \
             -H "Accept: text/event-stream" \
-            -d "{\"conversationId\": \"report-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"Generate the report.html from the evaluation results.\"}" \
+            -d "{\"conversationId\": \"report-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"Generate both report.html and project-card.html from the evaluation results, following all steps in the generate-otel-report skill.\"}" \
             --max-time 3600 2>report-curl-errors.txt | tee report-response.txt
           CURL_EXIT=${PIPESTATUS[0]}
           set -o pipefail
@@ -332,8 +332,9 @@ jobs:
 
           # Copy from all possible locations inside the container
           docker cp "report-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
-          # The agent may write report.html to the working directory /app/ directly
+          # The agent may write report.html / project-card.html to the working directory /app/ directly
           docker cp "report-agent:/app/report.html" "${HOST_DIR}/report.html" 2>/dev/null || true
+          docker cp "report-agent:/app/project-card.html" "${HOST_DIR}/project-card.html" 2>/dev/null || true
 
           echo "── Files on host after extraction:"
           find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
@@ -384,16 +385,18 @@ jobs:
 
           # Check each expected artifact and track missing ones
           MISSING=""
-          for file in INSTALL-PLAN.md EVALUATION.md report.html; do
+          ALL_PRESENT=1
+          for file in INSTALL-PLAN.md EVALUATION.md report.html project-card.html; do
             if [[ -f "$DST/$file" ]]; then
               echo "  ✓ $file"
             else
               echo "  ✗ $file — MISSING"
               MISSING="$MISSING\n- \`$file\`"
+              ALL_PRESENT=0
             fi
           done
 
-          if [[ -f "$DST/report.html" ]]; then
+          if [[ "$ALL_PRESENT" == "1" ]]; then
             echo "report_generated=1" >> "$GITHUB_OUTPUT"
           else
             # Append missing artifacts to the error report
@@ -475,7 +478,7 @@ jobs:
           PROJECT="${{ github.event.inputs.project_name }}"
           DST="results/${PROJECT}"
           MISSING=()
-          for file in INSTALL-PLAN.md EVALUATION.md report.html; do
+          for file in INSTALL-PLAN.md EVALUATION.md report.html project-card.html; do
             if [[ ! -f "$DST/$file" ]]; then
               MISSING+=("$file")
             fi
@@ -484,7 +487,7 @@ jobs:
           if (( ${#MISSING[@]} > 0 )); then
             echo "::error::Evaluation incomplete — missing: ${MISSING[*]}"
             echo ""
-            echo "Expected artifacts: INSTALL-PLAN.md, EVALUATION.md, report.html"
+            echo "Expected artifacts: INSTALL-PLAN.md, EVALUATION.md, report.html, project-card.html"
             echo "Missing: ${MISSING[*]}"
             echo ""
             echo "No PR was created on otel-maturity/results. Check the agent logs in the uploaded artifacts for details."
