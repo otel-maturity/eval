@@ -409,7 +409,7 @@ jobs:
 
       - name: Generate GitHub App token
         id: app-token
-        if: always() && steps.collect.outputs.files_found == '1'
+        if: always() && steps.collect.outputs.report_generated == '1'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.APP_ID }}
@@ -419,14 +419,12 @@ jobs:
 
       - name: Push results and create PR on otel-maturity/results
         id: create-pr
-        if: always() && steps.collect.outputs.files_found == '1'
+        if: always() && steps.collect.outputs.report_generated == '1'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH="results/${{ github.event.inputs.project_name }}"
           DST="${{ github.event.inputs.project_name }}"
-          STATUS="${{ steps.collect.outputs.report_generated == '1' && 'Completed' || 'Incomplete — the report was not generated. The files included can be reused for another evaluation run.' }}"
-          TITLE_SUFFIX="${{ steps.collect.outputs.report_generated != '1' && ' (incomplete)' || '' }}"
 
           # Clone the results repo using the app token
           git clone "https://x-access-token:${GH_TOKEN}@github.com/otel-maturity/results.git" /tmp/results-repo
@@ -456,11 +454,9 @@ jobs:
 
           if [[ -z "$EXISTING" ]]; then
             gh pr create --repo otel-maturity/results \
-              --title "OTel maturity report: ${{ github.event.inputs.project_name }}${TITLE_SUFFIX}" \
+              --title "OTel maturity report: ${{ github.event.inputs.project_name }}" \
               --body "$(cat <<EOF
           Automated OTel maturity evaluation for [${{ github.event.inputs.project_name }}](${{ github.event.inputs.project_url }}).
-
-          **Status:** ${STATUS}
 
           All files from the \`.otel-eval/${{ github.event.inputs.project_name }}/\` evaluation directory are included.
 
@@ -473,16 +469,25 @@ jobs:
             echo "PR #${EXISTING} already exists — updated branch"
           fi
 
-      - name: Verify report.html was generated
-        if: always() && steps.collect.outputs.files_found == '1'
+      - name: Verify all expected artifacts were generated
+        if: always()
         run: |
-          if [[ "${{ steps.collect.outputs.report_generated }}" != "1" ]]; then
-            echo "::error::report.html was not generated — the evaluation is incomplete"
+          PROJECT="${{ github.event.inputs.project_name }}"
+          DST="results/${PROJECT}"
+          MISSING=()
+          for file in INSTALL-PLAN.md EVALUATION.md report.html; do
+            if [[ ! -f "$DST/$file" ]]; then
+              MISSING+=("$file")
+            fi
+          done
+
+          if (( ${#MISSING[@]} > 0 )); then
+            echo "::error::Evaluation incomplete — missing: ${MISSING[*]}"
             echo ""
             echo "Expected artifacts: INSTALL-PLAN.md, EVALUATION.md, report.html"
-            echo "Missing: report.html"
+            echo "Missing: ${MISSING[*]}"
             echo ""
-            echo "Check the report-agent logs in the uploaded artifacts for details."
+            echo "No PR was created on otel-maturity/results. Check the agent logs in the uploaded artifacts for details."
             exit 1
           fi
           echo "All expected artifacts were generated successfully"
