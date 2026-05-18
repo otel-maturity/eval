@@ -3,7 +3,7 @@
     {
       "name": "evaluate-otel-maturity",
       "source": "ghcr.io/otel-maturity/evaluate-otel-maturity",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "additionalBasePaths": [
         ".claude/skills",
         ".codex/skills",

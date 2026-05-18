@@ -15,6 +15,8 @@ import reactor.core.publisher.Flux;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -44,6 +46,8 @@ public class ChatController {
 
         // Check if previous results exist on the filesystem (both locations)
         boolean foundPrevious = false;
+        int nextVersion = 1;
+        Pattern versionPattern = Pattern.compile("EVALUATION_v(\\d+)\\.md");
         for (Path dir : new Path[]{
                 Path.of(".otel-eval", request.projectName()),
                 Path.of("results", request.projectName())}) {
@@ -65,11 +69,25 @@ public class ChatController {
                             .append(evaluation)
                             .append(" and use it as reference for the new evaluation.\n");
                 }
+                // Determine the highest existing version number for this project
+                try (var files = Files.list(dir)) {
+                    int highestVersion = files
+                            .map(p -> {
+                                Matcher m = versionPattern.matcher(p.getFileName().toString());
+                                return m.matches() ? Integer.parseInt(m.group(1)) : 0;
+                            })
+                            .max(Integer::compareTo)
+                            .orElse(0);
+                    nextVersion = Math.max(nextVersion, highestVersion + 1);
+                } catch (IOException e) {
+                    // keep current nextVersion
+                }
             }
         }
         if (!foundPrevious) {
             userPrompt.append("No previous evaluation exists for this project.\n");
         }
+        userPrompt.append("The version tag for this evaluation run is: v").append(nextVersion).append("\n");
 
         userPrompt.append(request.message());
 

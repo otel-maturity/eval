@@ -31,13 +31,19 @@ public class AgentConfig {
                         EVALUATE the project's OTel maturity:
                            - If the prompt lists an EVALUATION.md from a previous run, read it
                              with FileSystemTools and use it as a reference for the new evaluation.
-                           - Always run the "evaluate-otel-maturity" skill to produce a fresh
-                             evaluation based on the current telemetry data.
+                           - Always run the "evaluate-otel-maturity" skill, passing both the
+                             project name and the version tag from the prompt as arguments
+                             (e.g. "evaluate-otel-maturity <project-name> <version>"), to produce
+                             a fresh evaluation based on the current telemetry data.
 
                         When using a skill or a tool always notify the user about the action
                         by sending regular messages with the progress of the evaluation.
 
-                        The evaluation must finish with the EVALUATION.md file generated.
+                        The evaluation must finish with TWO files saved in the project directory:
+                           1. EVALUATION.md — the full evaluation (overwrite if it already exists, always reflects the latest run)
+                           2. EVALUATION_v{version}.md — a versioned copy using the exact version tag from the prompt (e.g. EVALUATION_v1.md)
+
+                        This versioning allows tracking evaluation history across multiple runs.
 
                         When the evaluation is finished, a message to the user about the
                         steps that were taken must be sent as the last message. Use ++++ as a separator.
