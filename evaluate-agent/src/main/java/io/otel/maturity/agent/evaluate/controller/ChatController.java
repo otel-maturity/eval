@@ -18,8 +18,10 @@ import reactor.core.publisher.Mono;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -95,39 +97,52 @@ public class ChatController {
         final int versionNumber = nextVersion;
         final boolean hasPrevious = foundPrevious;
 
-        // Call all 7 dimension agents in parallel using virtual threads
+        // Call all 7 dimension agents in parallel using virtual threads.
+        // Results are collected into a map as each dimension completes so that
+        // we can stream each section to the user the moment it arrives, rather
+        // than waiting for all 7 before emitting anything.
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        Map<Integer, String> dimResults = new ConcurrentHashMap<>();
 
-        Mono<String> d1 = Mono.fromFuture(() -> callDimensionAgent(dim1Url, request, version, executor));
-        Mono<String> d2 = Mono.fromFuture(() -> callDimensionAgent(dim2Url, request, version, executor));
-        Mono<String> d3 = Mono.fromFuture(() -> callDimensionAgent(dim3Url, request, version, executor));
-        Mono<String> d4 = Mono.fromFuture(() -> callDimensionAgent(dim4Url, request, version, executor));
-        Mono<String> d5 = Mono.fromFuture(() -> callDimensionAgent(dim5Url, request, version, executor));
-        Mono<String> d6 = Mono.fromFuture(() -> callDimensionAgent(dim6Url, request, version, executor));
-        Mono<String> d7 = Mono.fromFuture(() -> callDimensionAgent(dim7Url, request, version, executor));
+        Flux<String> d1 = dimFlux(1, "Integration Surface",            dim1Url, request, version, executor, dimResults);
+        Flux<String> d2 = dimFlux(2, "Semantic Conventions",           dim2Url, request, version, executor, dimResults);
+        Flux<String> d3 = dimFlux(3, "Resource Attributes",            dim3Url, request, version, executor, dimResults);
+        Flux<String> d4 = dimFlux(4, "Trace Modeling",                 dim4Url, request, version, executor, dimResults);
+        Flux<String> d5 = dimFlux(5, "Multi-Signal Observability",     dim5Url, request, version, executor, dimResults);
+        Flux<String> d6 = dimFlux(6, "Audience & Signal Quality",      dim6Url, request, version, executor, dimResults);
+        Flux<String> d7 = dimFlux(7, "Stability & Change Management",  dim7Url, request, version, executor, dimResults);
 
         return Flux.concat(
                 Flux.just("Starting parallel dimension evaluations for "
-                        + request.projectName() + " " + version + "...\n"),
-                Mono.zip(d1, d2, d3, d4, d5, d6, d7)
-                        .flatMapMany(tuple -> {
-                            executor.close();
-                            String assemblyPrompt = buildAssemblyPrompt(
-                                    request, version, versionNumber, hasPrevious,
-                                    tuple.getT1(), tuple.getT2(), tuple.getT3(),
-                                    tuple.getT4(), tuple.getT5(), tuple.getT6(), tuple.getT7());
-                            return chatClient.prompt()
+                        + request.projectName() + " " + version + "...\n\n"),
+                // Emits each dimension's section as soon as it finishes (order varies)
+                Flux.merge(d1, d2, d3, d4, d5, d6, d7),
+                // Flux.merge completes only after all 7 are done — safe to assemble
+                Mono.defer(() -> {
+                    executor.close();
+                    String assemblyPrompt = buildAssemblyPrompt(
+                            request, version, versionNumber, hasPrevious,
+                            dimResults.getOrDefault(1, ""),
+                            dimResults.getOrDefault(2, ""),
+                            dimResults.getOrDefault(3, ""),
+                            dimResults.getOrDefault(4, ""),
+                            dimResults.getOrDefault(5, ""),
+                            dimResults.getOrDefault(6, ""),
+                            dimResults.getOrDefault(7, ""));
+                    return Flux.just("\n\n---\nAssembling final evaluation...\n\n")
+                            .concatWith(chatClient.prompt()
                                     .advisors(advisor)
                                     .user(assemblyPrompt)
                                     .stream()
-                                    .content();
-                        })
+                                    .content());
+                })
         );
     }
 
-    private CompletableFuture<String> callDimensionAgent(String baseUrl, ChatRequest original,
-                                                          String version, ExecutorService executor) {
-        return CompletableFuture.supplyAsync(() -> {
+    private Flux<String> dimFlux(int num, String label, String baseUrl,
+                                  ChatRequest original, String version,
+                                  ExecutorService executor, Map<Integer, String> results) {
+        return Mono.fromFuture(() -> CompletableFuture.supplyAsync(() -> {
             ChatRequest req = new ChatRequest(
                     UUID.randomUUID().toString(),
                     original.clusterName(),
@@ -141,7 +156,10 @@ public class ChatController {
                     .retrieve()
                     .body(String.class);
             return response != null ? response : "";
-        }, executor);
+        }, executor))
+        .doOnNext(r -> results.put(num, r))
+        .map(r -> "#### [Dimension " + num + " — " + label + " — complete]\n\n" + r + "\n\n")
+        .flux();
     }
 
     private String buildAssemblyPrompt(ChatRequest request, String version, int versionNumber,
