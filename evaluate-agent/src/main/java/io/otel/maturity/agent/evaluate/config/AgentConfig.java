@@ -1,58 +1,44 @@
 package io.otel.maturity.agent.evaluate.config;
 
 import org.springaicommunity.agent.tools.FileSystemTools;
-import org.springaicommunity.agent.tools.ShellTools;
-import org.springaicommunity.agent.tools.SkillsTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ResourceLoader;
 
 @Configuration
 public class AgentConfig {
 
     @Bean
-    ChatClient chatClient(ChatClient.Builder builder,
-                          ResourceLoader resourceLoader) {
+    ChatClient chatClient(ChatClient.Builder builder) {
         return builder
                 .defaultSystem("""
-                        # Evaluate Agent
+                        # Evaluate Agent (Orchestrator)
 
                         You are the **Evaluate Agent** for the OpenTelemetry Maturity Evaluation pipeline.
-                        
-                        Your responsibility is to evaluate a CNCF project's OpenTelemetry support using the \
-                        OpenTelemetry Support Maturity Model. You use the `evaluate-otel-maturity` skill, which \
-                        includes the full maturity model specification in `maturity-model-spec.md`.
+                        Your role is to assemble the complete OTel maturity evaluation from the seven
+                        dimension sections provided to you. You do NOT run dimension skills yourself —
+                        the dimension agents have already evaluated each dimension and returned their sections.
 
-                        The prompt will indicate whether a previous evaluation run exists for
-                        the project being evaluated. When a previous run exists, the prompt
-                        will list the available files and their paths.
+                        You receive the full text output from all 7 dimension agents and must:
 
-                        EVALUATE the project's OTel maturity:
-                           - If the prompt lists an EVALUATION.md from a previous run, read it
-                             with FileSystemTools and use it as a reference for the new evaluation.
-                           - Always run the "evaluate-otel-maturity" skill, passing both the
-                             project name and the version tag from the prompt as arguments
-                             (e.g. "evaluate-otel-maturity <project-name> <version>"), to produce
-                             a fresh evaluation based on the current telemetry data.
+                        1. Extract the assigned level (0–3) from each dimension section.
+                        2. Write the complete EVALUATION.md in the standard format:
+                           - Project overview (metadata header)
+                           - Summary table with all 7 dimensions and their levels
+                           - Telemetry overview (signals observed, resource attributes)
+                           - All 7 dimension evaluation sections verbatim
+                           - Key findings: top 3 strengths, top 3 areas for improvement, notable observations
+                           - Methodology notes
+                        3. Also write EVALUATION_v{version}.md as a versioned copy.
 
-                        When using a skill or a tool always notify the user about the action
-                        by sending regular messages with the progress of the evaluation.
+                        Both files must be saved in .otel-eval/<project-name>/ using FileSystemTools.
 
-                        The evaluation must finish with TWO files saved in the project directory:
-                           1. EVALUATION.md — the full evaluation (overwrite if it already exists, always reflects the latest run)
-                           2. EVALUATION_v{version}.md — a versioned copy using the exact version tag from the prompt (e.g. EVALUATION_v1.md)
+                        If a previous EVALUATION.md exists, read it first and use it as context.
 
-                        This versioning allows tracking evaluation history across multiple runs.
-
-                        When the evaluation is finished, a message to the user about the
-                        steps that were taken must be sent as the last message. Use ++++ as a separator.
+                        When the evaluation is finished, send a summary message to the user with the
+                        summary table and top findings. Use ++++ as a separator before the final message.
                         """)
-                .defaultToolCallbacks(SkillsTool.builder()
-                        .addSkillsResource(resourceLoader.getResource("classpath:.agents/skills"))
-                        .build())
                 .defaultTools(FileSystemTools.builder().build())
-                .defaultTools(ShellTools.builder().build())
                 .build();
     }
 }

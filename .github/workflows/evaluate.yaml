@@ -47,7 +47,8 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       # ── Shared directories ────────────────────────────────────────────────
-      # .otel-eval/ is where all three agents write their output (per skills).
+      # .otel-eval/ is where all agents write their output (per skills).
+      # Dimension agents write dim-N-*.md here; evaluate-agent assembles EVALUATION.md.
       # results/ is cloned from otel-maturity/results so agents can find
       # previous evaluation data via their controllers' results/{project}/ check.
 
@@ -135,7 +136,6 @@ jobs:
           docker exec install-agent find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
           docker exec install-agent find /app/.otel-eval -type f 2>/dev/null || true
 
-          # Copy from all possible locations inside the container
           docker cp "install-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
 
           echo "── Files on host after extraction:"
@@ -159,7 +159,82 @@ jobs:
             echo "install_plan_found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Step 2: Evaluate Agent ───────────────────────────────────────────
+      # ── Step 2: Dimension Agents (parallel evaluators) ────────────────────
+      # Each dimension agent runs on its own port (8081–8087) so there are no
+      # port conflicts with each other or with the evaluate-agent on 8080.
+      # All share the same volume mounts so they can read the JSONL telemetry
+      # files from /tmp and write their dim-N-*.md output to .otel-eval/.
+
+      - name: Start dimension agents
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          REPO="${{ github.repository }}"
+
+          # Shared flags applied to every dimension agent container
+          run_dim() {
+            local name="$1" port="$2" image="$3"
+            docker run -d \
+              --name "${name}" \
+              --network=host \
+              -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+              -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+              -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+              -e DASH0_DATASET="${DASH0_DATASET}" \
+              -e SERVER_PORT="${port}" \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /tmp:/tmp \
+              -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+              "ghcr.io/${REPO}/${image}:latest"
+          }
+
+          run_dim dim1-agent 8081 integration-surface-agent
+          run_dim dim2-agent 8082 semantic-conventions-agent
+          run_dim dim3-agent 8083 resource-attributes-agent
+          run_dim dim4-agent 8084 trace-modeling-agent
+          run_dim dim5-agent 8085 multi-signal-agent
+          run_dim dim6-agent 8086 audience-quality-agent
+          run_dim dim7-agent 8087 stability-agent
+
+      - name: Wait for all dimension agents to be ready
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        run: |
+          declare -A AGENTS=(
+            [8081]="dim1-agent (integration-surface)"
+            [8082]="dim2-agent (semantic-conventions)"
+            [8083]="dim3-agent (resource-attributes)"
+            [8084]="dim4-agent (trace-modeling)"
+            [8085]="dim5-agent (multi-signal)"
+            [8086]="dim6-agent (audience-quality)"
+            [8087]="dim7-agent (stability)"
+          )
+
+          for port in 8081 8082 8083 8084 8085 8086 8087; do
+            echo "Waiting for ${AGENTS[$port]} on port ${port}..."
+            for i in $(seq 1 30); do
+              if curl -s -o /dev/null "http://localhost:${port}/actuator/health" 2>/dev/null || \
+                 curl -s -o /dev/null "http://localhost:${port}/" 2>/dev/null; then
+                echo "  Ready (attempt ${i})"
+                break
+              fi
+              if [[ $i -eq 30 ]]; then
+                echo "::error::${AGENTS[$port]} on port ${port} did not start within 90s"
+                docker logs "dim$(( (port - 8080) ))-agent" 2>&1 | tail -30
+                exit 1
+              fi
+              sleep 3
+            done
+          done
+          echo "All 7 dimension agents are ready"
+
+      # ── Step 3: Evaluate Agent (orchestrator) ────────────────────────────
+      # Runs on port 8080 (no conflict — install-agent was already stopped).
+      # Calls each dimension agent via /api/evaluate, collects all 7 results,
+      # then assembles and writes EVALUATION.md using its own Claude call.
 
       - name: Start evaluate-agent
         if: steps.check_install.outputs.install_plan_found == 'true'
@@ -175,6 +250,13 @@ jobs:
             -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
             -e DASH0_DATASET="${DASH0_DATASET}" \
+            -e DIMENSION_1_URL="http://localhost:8081" \
+            -e DIMENSION_2_URL="http://localhost:8082" \
+            -e DIMENSION_3_URL="http://localhost:8083" \
+            -e DIMENSION_4_URL="http://localhost:8084" \
+            -e DIMENSION_5_URL="http://localhost:8085" \
+            -e DIMENSION_6_URL="http://localhost:8086" \
+            -e DIMENSION_7_URL="http://localhost:8087" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
@@ -223,25 +305,34 @@ jobs:
             exit $CURL_EXIT
           fi
 
-      - name: Copy artifacts and stop evaluate-agent
+      - name: Copy artifacts and stop evaluate-agent and dimension agents
         if: always() && steps.check_install.outputs.install_plan_found == 'true'
         run: |
           PROJECT="${{ github.event.inputs.project_name }}"
           HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
 
           echo "── Files inside evaluate-agent container:"
-          docker exec evaluate-agent find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
           docker exec evaluate-agent find /app/.otel-eval -type f 2>/dev/null || true
 
-          # Copy from all possible locations inside the container
+          # Dimension agents write directly through the shared volume mount,
+          # so their dim-N-*.md files are already on the host. Copy evaluate-agent
+          # output to catch anything written inside the container.
           docker cp "evaluate-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
 
           echo "── Files on host after extraction:"
           find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
 
+          # Collect evaluate-agent logs
           docker logs evaluate-agent > evaluate-agent-logs.txt 2>&1 || true
           docker stop evaluate-agent || true
           docker rm evaluate-agent || true
+
+          # Collect dimension agent logs and stop them
+          for n in 1 2 3 4 5 6 7; do
+            docker logs "dim${n}-agent" > "dim${n}-agent-logs.txt" 2>&1 || true
+            docker stop "dim${n}-agent" || true
+            docker rm "dim${n}-agent" || true
+          done
 
       - name: Verify EVALUATION.md exists
         if: steps.check_install.outputs.install_plan_found == 'true'
@@ -258,7 +349,7 @@ jobs:
             echo "evaluation_found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Step 3: Report Agent ─────────────────────────────────────────────
+      # ── Step 4: Report Agent ─────────────────────────────────────────────
 
       - name: Start report-agent
         if: steps.check_eval.outputs.evaluation_found == 'true'
@@ -330,9 +421,7 @@ jobs:
           docker exec report-agent find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
           docker exec report-agent find /app/.otel-eval -type f 2>/dev/null || true
 
-          # Copy from all possible locations inside the container
           docker cp "report-agent:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
-          # The agent may write report.html / project-card.html to the working directory /app/ directly
           docker cp "report-agent:/app/report.html" "${HOST_DIR}/report.html" 2>/dev/null || true
           docker cp "report-agent:/app/project-card.html" "${HOST_DIR}/project-card.html" 2>/dev/null || true
 
@@ -357,6 +446,13 @@ jobs:
             install-agent-logs.txt
             evaluate-agent-logs.txt
             report-agent-logs.txt
+            dim1-agent-logs.txt
+            dim2-agent-logs.txt
+            dim3-agent-logs.txt
+            dim4-agent-logs.txt
+            dim5-agent-logs.txt
+            dim6-agent-logs.txt
+            dim7-agent-logs.txt
             .otel-eval/${{ github.event.inputs.project_name }}/
             /tmp/otel-eval-${{ github.event.inputs.project_name }}/
           if-no-files-found: warn
@@ -375,7 +471,6 @@ jobs:
             exit 0
           fi
 
-          # Copy artifacts into results/ for the PR
           mkdir -p "$DST"
           cp -r "$SRC"/. "$DST"/
 
@@ -383,7 +478,6 @@ jobs:
           find "$DST" -type f -exec ls -lh {} \;
           echo "files_found=1" >> "$GITHUB_OUTPUT"
 
-          # Check each expected artifact and track missing ones
           MISSING=""
           ALL_PRESENT=1
           for file in INSTALL-PLAN.md EVALUATION.md report.html project-card.html; do
@@ -399,7 +493,6 @@ jobs:
           if [[ "$ALL_PRESENT" == "1" ]]; then
             echo "report_generated=1" >> "$GITHUB_OUTPUT"
           else
-            # Append missing artifacts to the error report
             touch evaluation-errors.txt
             {
               echo "## Missing evaluation artifacts"
@@ -429,17 +522,14 @@ jobs:
           BRANCH="results/${{ github.event.inputs.project_name }}"
           DST="${{ github.event.inputs.project_name }}"
 
-          # Clone the results repo using the app token
           git clone "https://x-access-token:${GH_TOKEN}@github.com/otel-maturity/results.git" /tmp/results-repo
           cd /tmp/results-repo
 
           git config user.name "otel-eval-bot[bot]"
           git config user.email "otel-eval-bot[bot]@users.noreply.github.com"
 
-          # Create or reset the branch
           git checkout -B "$BRANCH"
 
-          # Copy evaluation artifacts
           mkdir -p "$DST"
           cp -r "${{ github.workspace }}/results/$DST"/. "$DST"/
 
@@ -451,7 +541,6 @@ jobs:
 
           git push -f origin "$BRANCH"
 
-          # Create PR if one doesn't already exist
           EXISTING=$(gh pr list --repo otel-maturity/results --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
@@ -498,7 +587,10 @@ jobs:
       - name: Print agent logs on failure
         if: failure()
         run: |
-          for log in install-agent-logs.txt evaluate-agent-logs.txt report-agent-logs.txt; do
+          for log in install-agent-logs.txt evaluate-agent-logs.txt report-agent-logs.txt \
+                     dim1-agent-logs.txt dim2-agent-logs.txt dim3-agent-logs.txt \
+                     dim4-agent-logs.txt dim5-agent-logs.txt dim6-agent-logs.txt \
+                     dim7-agent-logs.txt; do
             if [[ -s "$log" ]]; then
               echo "══════════════════════════════════════════════════════════"
               echo " ${log%.txt} (last 50 lines)"

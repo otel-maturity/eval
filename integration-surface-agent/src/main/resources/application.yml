@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: integration-surface-agent
+  mvc:
+    async:
+      request-timeout: -1
+  ai:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY}
+      timeout: 2h
+      chat:
+        options:
+          model: claude-sonnet-4-6
+          max-tokens: 16384
+          temperature: 0.7
+    chat:
+      observations:
+        include-error-logging: true
+        log-completion: true
+        log-prompt: true
+    tools:
+      observations:
+        include-content: true
+
+
+logging:
+  level:
+    org.springframework.ai: INFO
+    otel-score.tools: INFO
+
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    metrics:
+      export:
+        url: ${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics
+        headers:
+          Authorization: "Bearer ${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}"
+          Dash0-Dataset: "${DASH0_DATASET}"
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces
+          headers:
+            Authorization: "Bearer ${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}"
+            Dash0-Dataset: "${DASH0_DATASET}"
+    logging:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/logs
+          headers:
+            Authorization: "Bearer ${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}"
+            Dash0-Dataset: "${DASH0_DATASET}"
+
+server:
+  port: 8080

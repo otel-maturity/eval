@@ -56,5 +56,22 @@ management:
             Authorization: "Bearer ${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}"
             Dash0-Dataset: "${DASH0_DATASET}"
 
+dimension:
+  agents:
+    1:
+      url: ${DIMENSION_1_URL:http://integration-surface-agent:8080}
+    2:
+      url: ${DIMENSION_2_URL:http://semantic-conventions-agent:8080}
+    3:
+      url: ${DIMENSION_3_URL:http://resource-attributes-agent:8080}
+    4:
+      url: ${DIMENSION_4_URL:http://trace-modeling-agent:8080}
+    5:
+      url: ${DIMENSION_5_URL:http://multi-signal-agent:8080}
+    6:
+      url: ${DIMENSION_6_URL:http://audience-quality-agent:8080}
+    7:
+      url: ${DIMENSION_7_URL:http://stability-agent:8080}
+
 server:
   port: 8080
