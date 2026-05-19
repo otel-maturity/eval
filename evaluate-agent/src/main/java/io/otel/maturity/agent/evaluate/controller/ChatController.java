@@ -118,7 +118,7 @@ public class ChatController {
                 // Emits each dimension's section as soon as it finishes (order varies)
                 Flux.merge(d1, d2, d3, d4, d5, d6, d7),
                 // Flux.merge completes only after all 7 are done — safe to assemble
-                Mono.defer(() -> {
+                Flux.defer(() -> {
                     executor.close();
                     String assemblyPrompt = buildAssemblyPrompt(
                             request, version, versionNumber, hasPrevious,
