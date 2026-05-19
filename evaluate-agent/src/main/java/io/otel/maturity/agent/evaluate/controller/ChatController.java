@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -18,6 +19,7 @@ import reactor.core.publisher.Mono;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -32,7 +34,7 @@ import java.util.regex.Pattern;
 public class ChatController {
 
     private final ChatClient chatClient;
-    private final RestClient restClient = RestClient.create();
+    private final RestClient restClient;
     private final InMemoryChatMemoryRepository memoryRepository = new InMemoryChatMemoryRepository();
 
     @Value("${dimension.agents.1.url:http://integration-surface-agent:8080}")
@@ -58,6 +60,9 @@ public class ChatController {
 
     public ChatController(ChatClient chatClient) {
         this.chatClient = chatClient;
+        HttpComponentsClientHttpRequestFactory factory = new HttpComponentsClientHttpRequestFactory();
+        factory.setReadTimeout(Duration.ofHours(2));
+        this.restClient = RestClient.builder().requestFactory(factory).build();
     }
 
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -157,6 +162,7 @@ public class ChatController {
                     .body(String.class);
             return response != null ? response : "";
         }, executor))
+        .onErrorResume(e -> Mono.just("(Dimension " + num + " evaluation failed: " + e.getMessage() + ")"))
         .doOnNext(r -> results.put(num, r))
         .map(r -> "#### [Dimension " + num + " — " + label + " — complete]\n\n" + r + "\n\n")
         .flux();
