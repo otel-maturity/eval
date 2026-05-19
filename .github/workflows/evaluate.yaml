@@ -66,6 +66,27 @@ jobs:
           }
 
       # ── Step 1: Install Agent ────────────────────────────────────────────
+      # Copy any previous INSTALL-PLAN.md / RESEARCH.md into .otel-eval/ so
+      # the install-agent finds them via the writable .otel-eval/ path.
+      # We do NOT mount previous-results inside the install-agent to avoid a
+      # read-only filesystem conflict: the agent would read from results/ then
+      # try to overwrite that same :ro file, silently failing.
+
+      - name: Seed previous install files into .otel-eval
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          SRC="${{ github.workspace }}/previous-results/${PROJECT}"
+          DST="${{ github.workspace }}/.otel-eval/${PROJECT}"
+          if [[ -d "$SRC" ]]; then
+            for f in INSTALL-PLAN.md RESEARCH.md; do
+              if [[ -f "$SRC/$f" ]]; then
+                cp "$SRC/$f" "$DST/$f"
+                echo "Seeded $f from previous results"
+              fi
+            done
+          else
+            echo "No previous results for ${PROJECT} — fresh install"
+          fi
 
       - name: Start install-agent
         env:
@@ -83,7 +104,6 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
-            -v ${{ github.workspace }}/previous-results:/app/results:ro \
             ghcr.io/${{ github.repository }}/install-agent:latest
 
       - name: Wait for install-agent to be ready
