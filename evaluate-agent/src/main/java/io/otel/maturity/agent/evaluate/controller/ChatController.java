@@ -128,15 +128,31 @@ public class ChatController {
                 // last virtual thread that triggered Flux.merge completion.
                 Flux.defer(() -> {
                     executor.shutdown();
+
+                    // Write EVALUATION.md directly in Java to guarantee the file exists
+                    // regardless of whether Claude's assembly call succeeds.
+                    String r1 = dimResults.getOrDefault(1, "");
+                    String r2 = dimResults.getOrDefault(2, "");
+                    String r3 = dimResults.getOrDefault(3, "");
+                    String r4 = dimResults.getOrDefault(4, "");
+                    String r5 = dimResults.getOrDefault(5, "");
+                    String r6 = dimResults.getOrDefault(6, "");
+                    String r7 = dimResults.getOrDefault(7, "");
+
+                    String preliminaryContent = buildPreliminaryEvaluation(
+                            request, version, versionNumber, r1, r2, r3, r4, r5, r6, r7);
+                    Path evalDir = Path.of(".otel-eval", request.projectName());
+                    try {
+                        Files.createDirectories(evalDir);
+                        Files.writeString(evalDir.resolve("EVALUATION.md"), preliminaryContent);
+                        Files.writeString(evalDir.resolve("EVALUATION_v" + versionNumber + ".md"),
+                                preliminaryContent);
+                    } catch (IOException e) {
+                        System.err.println("Warning: failed to write EVALUATION.md: " + e.getMessage());
+                    }
+
                     String assemblyPrompt = buildAssemblyPrompt(
-                            request, version, versionNumber, hasPrevious,
-                            dimResults.getOrDefault(1, ""),
-                            dimResults.getOrDefault(2, ""),
-                            dimResults.getOrDefault(3, ""),
-                            dimResults.getOrDefault(4, ""),
-                            dimResults.getOrDefault(5, ""),
-                            dimResults.getOrDefault(6, ""),
-                            dimResults.getOrDefault(7, ""));
+                            request, version, versionNumber, hasPrevious, r1, r2, r3, r4, r5, r6, r7);
                     return Flux.just("\n\n---\nAssembling final evaluation...\n\n")
                             .concatWith(chatClient.prompt()
                                     .advisors(advisor)
@@ -171,6 +187,22 @@ public class ChatController {
         .flux();
     }
 
+    private String buildPreliminaryEvaluation(ChatRequest request, String version, int versionNumber,
+                                               String d1, String d2, String d3, String d4,
+                                               String d5, String d6, String d7) {
+        return "# OTel Maturity Evaluation: " + request.projectName() + " (" + version + ")\n\n" +
+               "> This file was assembled from dimension agent outputs. " +
+               "A polished version may follow if Claude assembly succeeds.\n\n" +
+               "## Dimension Results\n\n" +
+               "### Dimension 1: Integration Surface\n\n" + d1 + "\n\n" +
+               "### Dimension 2: Semantic Conventions\n\n" + d2 + "\n\n" +
+               "### Dimension 3: Resource Attributes & Configuration\n\n" + d3 + "\n\n" +
+               "### Dimension 4: Trace Modeling & Context Propagation\n\n" + d4 + "\n\n" +
+               "### Dimension 5: Multi-Signal Observability\n\n" + d5 + "\n\n" +
+               "### Dimension 6: Audience & Signal Quality\n\n" + d6 + "\n\n" +
+               "### Dimension 7: Stability & Change Management\n\n" + d7 + "\n";
+    }
+
     private String buildAssemblyPrompt(ChatRequest request, String version, int versionNumber,
                                         boolean hasPrevious,
                                         String d1, String d2, String d3, String d4,
@@ -180,7 +212,7 @@ public class ChatController {
           .append(request.projectName()).append("** (evaluation run: ").append(version).append(").\n\n");
 
         if (hasPrevious) {
-            Path prev = Path.of(".otel-eval", request.projectName(), "EVALUATION.md");
+            Path prev = Path.of(".otel-eval", request.projectName(), "EVALUATION.md").toAbsolutePath();
             if (Files.isRegularFile(prev)) {
                 sb.append("A previous EVALUATION.md exists at ").append(prev)
                   .append(" — read it for context before assembling.\n\n");
@@ -196,9 +228,12 @@ public class ChatController {
         sb.append("### Dimension 6: Audience & Signal Quality\n\n").append(d6).append("\n\n");
         sb.append("### Dimension 7: Stability & Change Management\n\n").append(d7).append("\n\n");
 
-        sb.append("Write the complete EVALUATION.md (overwriting any existing file) and ")
-          .append("EVALUATION_v").append(versionNumber).append(".md ")
-          .append("to .otel-eval/").append(request.projectName()).append("/ using FileSystemTools.\n");
+        String evalDir = Path.of(".otel-eval", request.projectName()).toAbsolutePath().toString();
+        sb.append("Write the complete EVALUATION.md (overwriting any existing file) to **")
+          .append(evalDir).append("/EVALUATION.md** and also write ")
+          .append("EVALUATION_v").append(versionNumber).append(".md to **")
+          .append(evalDir).append("/EVALUATION_v").append(versionNumber).append(".md")
+          .append("** using the Write tool. Use those exact absolute paths.\n");
 
         return sb.toString();
     }
