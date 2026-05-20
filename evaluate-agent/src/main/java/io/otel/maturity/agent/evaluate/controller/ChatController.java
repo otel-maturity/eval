@@ -122,9 +122,12 @@ public class ChatController {
                         + request.projectName() + " " + version + "...\n\n"),
                 // Emits each dimension's section as soon as it finishes (order varies)
                 Flux.merge(d1, d2, d3, d4, d5, d6, d7),
-                // Flux.merge completes only after all 7 are done — safe to assemble
+                // Flux.merge completes only after all 7 are done — safe to assemble.
+                // executor.shutdown() (non-blocking) not close() — close() calls
+                // awaitTermination() which deadlocks when invoked from within the
+                // last virtual thread that triggered Flux.merge completion.
                 Flux.defer(() -> {
-                    executor.close();
+                    executor.shutdown();
                     String assemblyPrompt = buildAssemblyPrompt(
                             request, version, versionNumber, hasPrevious,
                             dimResults.getOrDefault(1, ""),
