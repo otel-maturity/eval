@@ -211,6 +211,15 @@ public class ChatController {
         sb.append("Assemble the complete EVALUATION.md for project **")
           .append(request.projectName()).append("** (evaluation run: ").append(version).append(").\n\n");
 
+        sb.append("**Step 1 — Gather context:** Run the `evaluate-otel-maturity` skill with ")
+          .append("arguments `").append(request.projectName()).append(" ").append(version)
+          .append("` to collect telemetry evidence and documentation findings. ")
+          .append("Use the skill output to produce the Project overview, Telemetry overview, ")
+          .append("and Installation context summary sections.\n\n");
+
+        sb.append("**Step 2 — Assemble:** Combine the context from Step 1 with the ")
+          .append("seven dimension results below into the final EVALUATION.md.\n\n");
+
         if (hasPrevious) {
             Path prev = Path.of(".otel-eval", request.projectName(), "EVALUATION.md").toAbsolutePath();
             if (Files.isRegularFile(prev)) {

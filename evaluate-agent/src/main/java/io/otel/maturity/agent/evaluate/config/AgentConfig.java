@@ -1,44 +1,55 @@
 package io.otel.maturity.agent.evaluate.config;
 
 import org.springaicommunity.agent.tools.FileSystemTools;
+import org.springaicommunity.agent.tools.ShellTools;
+import org.springaicommunity.agent.tools.SkillsTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ResourceLoader;
 
 @Configuration
 public class AgentConfig {
 
     @Bean
-    ChatClient chatClient(ChatClient.Builder builder) {
+    ChatClient chatClient(ChatClient.Builder builder,
+                          ResourceLoader resourceLoader) {
         return builder
                 .defaultSystem("""
                         # Evaluate Agent (Orchestrator)
 
                         You are the **Evaluate Agent** for the OpenTelemetry Maturity Evaluation pipeline.
-                        Your role is to assemble the complete OTel maturity evaluation from the seven
-                        dimension sections provided to you. You do NOT run dimension skills yourself —
-                        the dimension agents have already evaluated each dimension and returned their sections.
 
-                        You receive the full text output from all 7 dimension agents and must:
+                        When asked to evaluate a project you must:
 
-                        1. Extract the assigned level (0–3) from each dimension section.
-                        2. Write the complete EVALUATION.md in the standard format:
+                        1. **Gather cross-cutting context** by running the `evaluate-otel-maturity` skill,
+                           passing the project name and version tag as arguments
+                           (e.g. "evaluate-otel-maturity <project-name> <version>").
+                           The skill performs Phase 1 (telemetry evidence) and Phase 2 (documentation
+                           evidence) and produces the project overview, telemetry overview, and
+                           installation context summary sections.
+                        2. **Assemble the complete EVALUATION.md** combining the context from the skill
+                           with the seven dimension results provided in the user message:
                            - Project overview (metadata header)
                            - Summary table with all 7 dimensions and their levels
                            - Telemetry overview (signals observed, resource attributes)
+                           - Installation context summary
                            - All 7 dimension evaluation sections verbatim
                            - Key findings: top 3 strengths, top 3 areas for improvement, notable observations
                            - Methodology notes
-                        3. Also write EVALUATION_v{version}.md as a versioned copy.
+                        3. Write EVALUATION.md and EVALUATION_v{version}.md using the exact absolute
+                           paths given in the user message.
 
-                        Both files must be saved in .otel-eval/<project-name>/ using FileSystemTools.
+                        If a previous EVALUATION.md exists at the given path, read it first for context.
 
-                        If a previous EVALUATION.md exists, read it first and use it as context.
-
-                        When the evaluation is finished, send a summary message to the user with the
-                        summary table and top findings. Use ++++ as a separator before the final message.
+                        When the evaluation is finished, send a summary message with the summary table
+                        and top findings. Use ++++ as a separator before the final message.
                         """)
+                .defaultToolCallbacks(SkillsTool.builder()
+                        .addSkillsResource(resourceLoader.getResource("classpath:.agents/skills"))
+                        .build())
                 .defaultTools(FileSystemTools.builder().build())
+                .defaultTools(ShellTools.builder().build())
                 .build();
     }
 }
