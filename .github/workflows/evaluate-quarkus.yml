@@ -1,0 +1,623 @@
+name: Evaluate CNCF Project OTel Maturity (Quarkus)
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: 'CNCF project name (e.g. jaeger)'
+        required: true
+        type: string
+      project_url:
+        description: 'CNCF project GitHub URL (e.g. https://github.com/jaegertracing/jaeger)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Evaluation setup ─────────────────────────────────────────────────
+
+      - name: Install kind
+        run: |
+          sudo curl -fsSL https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64 -o /usr/local/bin/kind
+          sudo chmod +x /usr/local/bin/kind
+          kind version
+
+      - name: Install helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.17.3-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          sudo tar -xzf /tmp/helm.tar.gz --strip-components=1 -C /usr/local/bin linux-amd64/helm
+          helm version
+
+      - name: Set up OTel evaluation cluster
+        run: bash scripts/setup-otel-cluster.sh "${{ github.event.inputs.project_name }}"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # ── Shared directories ────────────────────────────────────────────────
+      # .otel-eval/ is where all agents write their output (per skills).
+      # Dimension agents write dim-N-*.md here; evaluate-agent assembles EVALUATION.md.
+      # results/ is cloned from otel-maturity/results so agents can find
+      # previous evaluation data via their controllers' results/{project}/ check.
+
+      - name: Create shared .otel-eval directory
+        run: |
+          mkdir -p "${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}"
+          chmod -R 777 "${{ github.workspace }}/.otel-eval"
+
+      - name: Clone previous results
+        run: |
+          git clone --depth 1 https://github.com/otel-maturity/results.git \
+            "${{ github.workspace }}/previous-results" || {
+            echo "No previous results repo found — starting fresh"
+            mkdir -p "${{ github.workspace }}/previous-results"
+          }
+
+      # ── Step 1: Install Agent (Quarkus) ──────────────────────────────────
+      # Copy any previous INSTALL-PLAN.md / RESEARCH.md into .otel-eval/ so
+      # the install-agent finds them via the writable .otel-eval/ path.
+
+      - name: Seed previous install files into .otel-eval
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          SRC="${{ github.workspace }}/previous-results/${PROJECT}"
+          DST="${{ github.workspace }}/.otel-eval/${PROJECT}"
+          if [[ -d "$SRC" ]]; then
+            for f in INSTALL-PLAN.md RESEARCH.md; do
+              if [[ -f "$SRC/$f" ]]; then
+                cp "$SRC/$f" "$DST/$f"
+                echo "Seeded $f from previous results"
+              fi
+            done
+          else
+            echo "No previous results for ${PROJECT} — fresh install"
+          fi
+
+      - name: Start install-agent-quarkus
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          docker run -d --name install-agent-quarkus \
+            --network=host \
+            -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+            -e DASH0_DATASET="${DASH0_DATASET}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp:/tmp \
+            -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            ghcr.io/${{ github.repository }}/install-agent-quarkus:latest
+
+      - name: Wait for install-agent-quarkus to be ready
+        run: |
+          echo "Waiting for install-agent-quarkus on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null "http://localhost:8080/q/health" 2>/dev/null || \
+               curl -s -o /dev/null "http://localhost:8080/" 2>/dev/null; then
+              echo "Ready (attempt ${i})"
+              exit 0
+            fi
+            echo "  ${i}/30 — sleeping 3s"
+            sleep 3
+          done
+          echo "install-agent-quarkus did not start within 90s"
+          docker logs install-agent-quarkus
+          exit 1
+
+      - name: Run installation
+        id: install
+        continue-on-error: true
+        run: |
+          echo "Installing: ${{ github.event.inputs.project_name }}"
+          set +o pipefail
+          curl -sS -N -X POST http://localhost:8080/api/chat \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d "{\"conversationId\": \"install-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"The kind cluster otel-eval-${{ github.event.inputs.project_name }} is already running with the OTel Collector and test backend deployed. Install the project and generate the INSTALL-PLAN.md.\"}" \
+            --max-time 3600 2>install-curl-errors.txt | tee install-response.txt
+          CURL_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+          if [[ $CURL_EXIT -ne 0 ]]; then
+            echo "## Installation request failed" > install-errors.txt
+            echo "" >> install-errors.txt
+            echo "curl exited with code \`$CURL_EXIT\`" >> install-errors.txt
+            if [[ -s install-curl-errors.txt ]]; then
+              echo '```' >> install-errors.txt
+              cat install-curl-errors.txt >> install-errors.txt
+              echo '```' >> install-errors.txt
+            fi
+            exit $CURL_EXIT
+          fi
+
+      - name: Copy artifacts and stop install-agent-quarkus
+        if: always()
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
+
+          echo "── Files inside install-agent-quarkus container:"
+          docker exec install-agent-quarkus find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
+          docker exec install-agent-quarkus find /app/.otel-eval -type f 2>/dev/null || true
+
+          docker cp "install-agent-quarkus:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+
+          echo "── Files on host after extraction:"
+          find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
+
+          docker logs install-agent-quarkus > install-agent-quarkus-logs.txt 2>&1 || true
+          docker stop install-agent-quarkus || true
+          docker rm install-agent-quarkus || true
+
+      - name: Verify INSTALL-PLAN.md exists
+        id: check_install
+        run: |
+          INSTALL_PLAN="${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}/INSTALL-PLAN.md"
+          if [[ -f "$INSTALL_PLAN" ]]; then
+            echo "INSTALL-PLAN.md found ($(wc -l < "$INSTALL_PLAN") lines)"
+            echo "install_plan_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "INSTALL-PLAN.md not found — skipping evaluation and report steps"
+            echo "── Files in .otel-eval directory:"
+            find "${{ github.workspace }}/.otel-eval" -type f 2>/dev/null || echo "  (none)"
+            echo "install_plan_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Step 2: Dimension Agents (Quarkus, parallel evaluators) ──────────
+      # Each dimension agent runs on its own port (8081–8087) so there are no
+      # port conflicts with each other or with the evaluate-agent on 8080.
+      # Quarkus reads SERVER_PORT via QUARKUS_HTTP_PORT env var (mapped from
+      # quarkus.http.port).
+
+      - name: Start dimension agents (quarkus)
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          REPO="${{ github.repository }}"
+
+          # Shared flags applied to every dimension agent container
+          run_dim() {
+            local name="$1" port="$2" image="$3"
+            docker run -d \
+              --name "${name}" \
+              --network=host \
+              -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+              -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+              -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+              -e DASH0_DATASET="${DASH0_DATASET}" \
+              -e QUARKUS_HTTP_PORT="${port}" \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /tmp:/tmp \
+              -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+              "ghcr.io/${REPO}/${image}:latest"
+          }
+
+          run_dim dim1-agent-quarkus 8081 integration-surface-agent-quarkus
+          run_dim dim2-agent-quarkus 8082 semantic-conventions-agent-quarkus
+          run_dim dim3-agent-quarkus 8083 resource-attributes-agent-quarkus
+          run_dim dim4-agent-quarkus 8084 trace-modeling-agent-quarkus
+          run_dim dim5-agent-quarkus 8085 multi-signal-agent-quarkus
+          run_dim dim6-agent-quarkus 8086 audience-quality-agent-quarkus
+          run_dim dim7-agent-quarkus 8087 stability-agent-quarkus
+
+      - name: Wait for all dimension agents to be ready
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        run: |
+          declare -A AGENTS=(
+            [8081]="dim1-agent-quarkus (integration-surface)"
+            [8082]="dim2-agent-quarkus (semantic-conventions)"
+            [8083]="dim3-agent-quarkus (resource-attributes)"
+            [8084]="dim4-agent-quarkus (trace-modeling)"
+            [8085]="dim5-agent-quarkus (multi-signal)"
+            [8086]="dim6-agent-quarkus (audience-quality)"
+            [8087]="dim7-agent-quarkus (stability)"
+          )
+
+          for port in 8081 8082 8083 8084 8085 8086 8087; do
+            echo "Waiting for ${AGENTS[$port]} on port ${port}..."
+            for i in $(seq 1 30); do
+              if curl -s -o /dev/null "http://localhost:${port}/q/health" 2>/dev/null || \
+                 curl -s -o /dev/null "http://localhost:${port}/" 2>/dev/null; then
+                echo "  Ready (attempt ${i})"
+                break
+              fi
+              if [[ $i -eq 30 ]]; then
+                echo "::error::${AGENTS[$port]} on port ${port} did not start within 90s"
+                docker logs "dim$(( (port - 8080) ))-agent-quarkus" 2>&1 | tail -30
+                exit 1
+              fi
+              sleep 3
+            done
+          done
+          echo "All 7 dimension agents are ready"
+
+      # ── Step 3: Evaluate Agent (orchestrator, Quarkus) ────────────────────
+      # Runs on port 8080 (no conflict — install-agent-quarkus was already stopped).
+      # Calls each dimension agent via /api/evaluate, collects all 7 results,
+      # then assembles and writes EVALUATION.md using its own Claude call.
+
+      - name: Start evaluate-agent-quarkus
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          docker run -d --name evaluate-agent-quarkus \
+            --network=host \
+            -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+            -e DASH0_DATASET="${DASH0_DATASET}" \
+            -e DIMENSION_1_URL="http://localhost:8081" \
+            -e DIMENSION_2_URL="http://localhost:8082" \
+            -e DIMENSION_3_URL="http://localhost:8083" \
+            -e DIMENSION_4_URL="http://localhost:8084" \
+            -e DIMENSION_5_URL="http://localhost:8085" \
+            -e DIMENSION_6_URL="http://localhost:8086" \
+            -e DIMENSION_7_URL="http://localhost:8087" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp:/tmp \
+            -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            -v ${{ github.workspace }}/previous-results:/app/results:ro \
+            ghcr.io/${{ github.repository }}/evaluate-agent-quarkus:latest
+
+      - name: Wait for evaluate-agent-quarkus to be ready
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        run: |
+          echo "Waiting for evaluate-agent-quarkus on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null "http://localhost:8080/q/health" 2>/dev/null || \
+               curl -s -o /dev/null "http://localhost:8080/" 2>/dev/null; then
+              echo "Ready (attempt ${i})"
+              exit 0
+            fi
+            echo "  ${i}/30 — sleeping 3s"
+            sleep 3
+          done
+          echo "evaluate-agent-quarkus did not start within 90s"
+          docker logs evaluate-agent-quarkus
+          exit 1
+
+      - name: Run evaluation
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        id: evaluate
+        continue-on-error: true
+        run: |
+          echo "Evaluating: ${{ github.event.inputs.project_name }}"
+          set +o pipefail
+          curl -sS -N -X POST http://localhost:8080/api/chat \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d "{\"conversationId\": \"eval-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"The kind cluster otel-eval-${{ github.event.inputs.project_name }} is already running with the CNCF project installed. Evaluate its OTel maturity and generate the EVALUATION.md.\"}" \
+            --max-time 3600 2>evaluate-curl-errors.txt | tee evaluate-response.txt
+          CURL_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+          if [[ $CURL_EXIT -ne 0 ]]; then
+            echo "## Evaluation request failed" > evaluate-errors.txt
+            echo "" >> evaluate-errors.txt
+            echo "curl exited with code \`$CURL_EXIT\`" >> evaluate-errors.txt
+            if [[ -s evaluate-curl-errors.txt ]]; then
+              echo '```' >> evaluate-errors.txt
+              cat evaluate-curl-errors.txt >> evaluate-errors.txt
+              echo '```' >> evaluate-errors.txt
+            fi
+            exit $CURL_EXIT
+          fi
+
+      - name: Copy artifacts and stop evaluate-agent-quarkus and dimension agents
+        if: always() && steps.check_install.outputs.install_plan_found == 'true'
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
+
+          echo "── Files inside evaluate-agent-quarkus container:"
+          docker exec evaluate-agent-quarkus find /app/.otel-eval -type f 2>/dev/null || true
+
+          docker cp "evaluate-agent-quarkus:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+
+          echo "── Files on host after extraction:"
+          find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
+
+          # Collect evaluate-agent-quarkus logs
+          docker logs evaluate-agent-quarkus > evaluate-agent-quarkus-logs.txt 2>&1 || true
+          docker stop evaluate-agent-quarkus || true
+          docker rm evaluate-agent-quarkus || true
+
+          # Collect dimension agent logs and stop them
+          for n in 1 2 3 4 5 6 7; do
+            docker logs "dim${n}-agent-quarkus" > "dim${n}-agent-quarkus-logs.txt" 2>&1 || true
+            docker stop "dim${n}-agent-quarkus" || true
+            docker rm "dim${n}-agent-quarkus" || true
+          done
+
+      - name: Verify EVALUATION.md exists
+        if: steps.check_install.outputs.install_plan_found == 'true'
+        id: check_eval
+        run: |
+          EVALUATION="${{ github.workspace }}/.otel-eval/${{ github.event.inputs.project_name }}/EVALUATION.md"
+          if [[ -f "$EVALUATION" ]]; then
+            echo "EVALUATION.md found ($(wc -l < "$EVALUATION") lines)"
+            echo "evaluation_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "EVALUATION.md not found — skipping report generation"
+            echo "── Files in .otel-eval directory:"
+            find "${{ github.workspace }}/.otel-eval" -type f 2>/dev/null || echo "  (none)"
+            echo "evaluation_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Step 4: Report Agent (Quarkus) ───────────────────────────────────
+
+      - name: Start report-agent-quarkus
+        if: steps.check_eval.outputs.evaluation_found == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS_API_KEY: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS_API_KEY }}
+          DASH0_DATASET: ${{ secrets.DASH0_DATASET }}
+        run: |
+          docker run -d --name report-agent-quarkus \
+            --network=host \
+            -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
+            -e DASH0_DATASET="${DASH0_DATASET}" \
+            -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            -v ${{ github.workspace }}/previous-results:/app/results:ro \
+            ghcr.io/${{ github.repository }}/report-agent-quarkus:latest
+
+      - name: Wait for report-agent-quarkus to be ready
+        if: steps.check_eval.outputs.evaluation_found == 'true'
+        run: |
+          echo "Waiting for report-agent-quarkus on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null "http://localhost:8080/q/health" 2>/dev/null || \
+               curl -s -o /dev/null "http://localhost:8080/" 2>/dev/null; then
+              echo "Ready (attempt ${i})"
+              exit 0
+            fi
+            echo "  ${i}/30 — sleeping 3s"
+            sleep 3
+          done
+          echo "report-agent-quarkus did not start within 90s"
+          docker logs report-agent-quarkus
+          exit 1
+
+      - name: Run report generation
+        if: steps.check_eval.outputs.evaluation_found == 'true'
+        id: report
+        continue-on-error: true
+        run: |
+          echo "Generating report for: ${{ github.event.inputs.project_name }}"
+          set +o pipefail
+          curl -sS -N -X POST http://localhost:8080/api/chat \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d "{\"conversationId\": \"report-${{ github.event.inputs.project_name }}\", \"clusterName\": \"otel-eval-${{ github.event.inputs.project_name }}\", \"projectName\": \"${{ github.event.inputs.project_name }}\", \"projectUrl\": \"${{ github.event.inputs.project_url }}\", \"message\": \"Generate both report.html and project-card.html from the evaluation results, following all steps in the generate-otel-report skill.\"}" \
+            --max-time 3600 2>report-curl-errors.txt | tee report-response.txt
+          CURL_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+          if [[ $CURL_EXIT -ne 0 ]]; then
+            echo "## Report generation request failed" > report-errors.txt
+            echo "" >> report-errors.txt
+            echo "curl exited with code \`$CURL_EXIT\`" >> report-errors.txt
+            if [[ -s report-curl-errors.txt ]]; then
+              echo '```' >> report-errors.txt
+              cat report-curl-errors.txt >> report-errors.txt
+              echo '```' >> report-errors.txt
+            fi
+            exit $CURL_EXIT
+          fi
+
+      - name: Copy artifacts and stop report-agent-quarkus
+        if: always() && steps.check_eval.outputs.evaluation_found == 'true'
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          HOST_DIR="${{ github.workspace }}/.otel-eval/${PROJECT}"
+
+          echo "── Files inside report-agent-quarkus container (searching all locations):"
+          docker exec report-agent-quarkus find /app -maxdepth 1 -type f -name "*.md" -o -name "*.html" 2>/dev/null || true
+          docker exec report-agent-quarkus find /app/.otel-eval -type f 2>/dev/null || true
+
+          docker cp "report-agent-quarkus:/app/.otel-eval/${PROJECT}/." "${HOST_DIR}/" 2>/dev/null || true
+          docker cp "report-agent-quarkus:/app/report.html" "${HOST_DIR}/report.html" 2>/dev/null || true
+          docker cp "report-agent-quarkus:/app/project-card.html" "${HOST_DIR}/project-card.html" 2>/dev/null || true
+
+          echo "── Files on host after extraction:"
+          find "${HOST_DIR}" -type f 2>/dev/null || echo "  (none)"
+
+          docker logs report-agent-quarkus > report-agent-quarkus-logs.txt 2>&1 || true
+          docker stop report-agent-quarkus || true
+          docker rm report-agent-quarkus || true
+
+      # ── Artifacts ────────────────────────────────────────────────────────
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otel-evaluation-quarkus-${{ github.event.inputs.project_name }}
+          path: |
+            install-response.txt
+            evaluate-response.txt
+            report-response.txt
+            install-agent-quarkus-logs.txt
+            evaluate-agent-quarkus-logs.txt
+            report-agent-quarkus-logs.txt
+            dim1-agent-quarkus-logs.txt
+            dim2-agent-quarkus-logs.txt
+            dim3-agent-quarkus-logs.txt
+            dim4-agent-quarkus-logs.txt
+            dim5-agent-quarkus-logs.txt
+            dim6-agent-quarkus-logs.txt
+            dim7-agent-quarkus-logs.txt
+            .otel-eval/${{ github.event.inputs.project_name }}/
+            /tmp/otel-eval-${{ github.event.inputs.project_name }}/
+          if-no-files-found: warn
+
+      # ── Open PR with results ─────────────────────────────────────────────
+      # Distinct PR branch (`results-quarkus/<project>`) so this workflow can
+      # run in parallel with `evaluate.yaml` against the same project without
+      # clobbering the Spring run's PR.
+
+      - name: Collect results for PR
+        if: always()
+        id: collect
+        run: |
+          SRC=".otel-eval/${{ github.event.inputs.project_name }}"
+          DST="results/${{ github.event.inputs.project_name }}"
+
+          if [[ ! -d "$SRC" ]] || [[ -z "$(ls -A "$SRC" 2>/dev/null)" ]]; then
+            echo "WARNING: no evaluation files were generated at $SRC"
+            exit 0
+          fi
+
+          mkdir -p "$DST"
+          cp -r "$SRC"/. "$DST"/
+
+          echo "── Files included in the pull request:"
+          find "$DST" -type f -exec ls -lh {} \;
+          echo "files_found=1" >> "$GITHUB_OUTPUT"
+
+          MISSING=""
+          ALL_PRESENT=1
+          for file in INSTALL-PLAN.md EVALUATION.md report.html project-card.html; do
+            if [[ -f "$DST/$file" ]]; then
+              echo "  ✓ $file"
+            else
+              echo "  ✗ $file — MISSING"
+              MISSING="$MISSING\n- \`$file\`"
+              ALL_PRESENT=0
+            fi
+          done
+
+          if [[ "$ALL_PRESENT" == "1" ]]; then
+            echo "report_generated=1" >> "$GITHUB_OUTPUT"
+          else
+            touch evaluation-errors.txt
+            {
+              echo "## Missing evaluation artifacts"
+              echo ""
+              echo "The following expected files were not generated:"
+              echo -e "$MISSING"
+              echo ""
+            } >> evaluation-errors.txt
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: always() && steps.collect.outputs.report_generated == '1'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: otel-maturity
+          repositories: results
+
+      - name: Push results and create PR on otel-maturity/results
+        id: create-pr
+        if: always() && steps.collect.outputs.report_generated == '1'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          BRANCH="results-quarkus/${{ github.event.inputs.project_name }}"
+          DST="${{ github.event.inputs.project_name }}"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/otel-maturity/results.git" /tmp/results-repo
+          cd /tmp/results-repo
+
+          git config user.name "otel-eval-bot[bot]"
+          git config user.email "otel-eval-bot[bot]@users.noreply.github.com"
+
+          git checkout -B "$BRANCH"
+
+          mkdir -p "$DST"
+          cp -r "${{ github.workspace }}/results/$DST"/. "$DST"/
+
+          git add "$DST/"
+          git commit -m "results: add OTel maturity evaluation for ${{ github.event.inputs.project_name }} (quarkus)" || {
+            echo "No changes to commit"
+            exit 0
+          }
+
+          git push -f origin "$BRANCH"
+
+          EXISTING=$(gh pr list --repo otel-maturity/results --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [[ -z "$EXISTING" ]]; then
+            gh pr create --repo otel-maturity/results \
+              --title "OTel maturity report: ${{ github.event.inputs.project_name }} (quarkus)" \
+              --body "$(cat <<EOF
+          Automated OTel maturity evaluation for [${{ github.event.inputs.project_name }}](${{ github.event.inputs.project_url }}).
+
+          Generated by the **Quarkus + LangChain4j** agent stack (parallel to the Spring stack run on \`evaluate.yaml\`).
+
+          All files from the \`.otel-eval/${{ github.event.inputs.project_name }}/\` evaluation directory are included.
+
+          Triggered by @${{ github.actor }} via workflow dispatch in [otel-maturity/eval](${RUN_URL}).
+          EOF
+          )" \
+              --base main \
+              --head "$BRANCH"
+          else
+            echo "PR #${EXISTING} already exists — updated branch"
+          fi
+
+      - name: Verify all expected artifacts were generated
+        if: always()
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          DST="results/${PROJECT}"
+          MISSING=()
+          for file in INSTALL-PLAN.md EVALUATION.md report.html project-card.html; do
+            if [[ ! -f "$DST/$file" ]]; then
+              MISSING+=("$file")
+            fi
+          done
+
+          if (( ${#MISSING[@]} > 0 )); then
+            echo "::error::Evaluation incomplete — missing: ${MISSING[*]}"
+            echo ""
+            echo "Expected artifacts: INSTALL-PLAN.md, EVALUATION.md, report.html, project-card.html"
+            echo "Missing: ${MISSING[*]}"
+            echo ""
+            echo "No PR was created on otel-maturity/results. Check the agent logs in the uploaded artifacts for details."
+            exit 1
+          fi
+          echo "All expected artifacts were generated successfully"
+
+      - name: Print agent logs on failure
+        if: failure()
+        run: |
+          for log in install-agent-quarkus-logs.txt evaluate-agent-quarkus-logs.txt report-agent-quarkus-logs.txt \
+                     dim1-agent-quarkus-logs.txt dim2-agent-quarkus-logs.txt dim3-agent-quarkus-logs.txt \
+                     dim4-agent-quarkus-logs.txt dim5-agent-quarkus-logs.txt dim6-agent-quarkus-logs.txt \
+                     dim7-agent-quarkus-logs.txt; do
+            if [[ -s "$log" ]]; then
+              echo "══════════════════════════════════════════════════════════"
+              echo " ${log%.txt} (last 50 lines)"
+              echo "══════════════════════════════════════════════════════════"
+              tail -50 "$log"
+              echo ""
+            fi
+          done

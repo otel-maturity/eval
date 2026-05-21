@@ -1,0 +1,15 @@
+{
+  "skills": [
+    {
+      "name": "dimension-7-stability-change-management",
+      "source": "ghcr.io/otel-maturity/dimension-7-stability-change-management",
+      "version": "0.0.1",
+      "additionalBasePaths": [
+        ".claude/skills",
+        ".codex/skills",
+        ".cursor/skills",
+        ".gemini/skills"
+      ]
+    }
+  ]
+}
