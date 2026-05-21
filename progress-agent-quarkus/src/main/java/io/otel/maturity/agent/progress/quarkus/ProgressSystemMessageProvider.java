@@ -1,12 +1,14 @@
 package io.otel.maturity.agent.progress.quarkus;
 
 import io.quarkiverse.langchain4j.runtime.aiservice.SystemMessageProvider;
-import io.quarkiverse.langchain4j.skills.runtime.SkillsToolProvider;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.inject.Instance;
-import jakarta.enterprise.inject.spi.CDI;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 @ApplicationScoped
 public class ProgressSystemMessageProvider implements SystemMessageProvider {
@@ -25,29 +27,49 @@ public class ProgressSystemMessageProvider implements SystemMessageProvider {
             If no TRACKING.md is found, no GitHub queries are needed — report this to the user \
             and stop.
 
-            TRACK the project's progress using the "track-project-progress" skill. \
-            Follow ALL steps in the skill (SKILL.md). The skill produces ONE file:
+            TRACK the project's progress following ALL steps in the skill instructions below. \
+            The skill produces ONE file:
               1. EVOLUTION.md — list of GitHub items ordered by date (newest first)
 
-            When using a skill or a tool always notify the user about the action \
+            When using a tool always notify the user about the action \
             by sending regular messages with the progress of the tracking.
 
             When the EVOLUTION.md is written (or updated), send a final message to the user \
             summarising the steps taken. Use ++++ as a separator.
             """;
 
+    @ConfigProperty(name = "quarkus.langchain4j.skills.directories")
+    String skillsDirectories;
+
     @Override
     public Optional<String> getSystemMessage(Object memoryId) {
-        Instance<SkillsToolProvider> skillsToolProvider = CDI.current().select(SkillsToolProvider.class);
         StringBuilder sb = new StringBuilder(AGENT_ROLE);
-        if (skillsToolProvider.isResolvable()) {
-            String skillsList = skillsToolProvider.get().getSkills().formatAvailableSkills();
-            sb.append("\n\nYou have access to the following skills:\n")
-              .append(skillsList)
-              .append("\n\nWhen the user's request relates to one of these skills, ")
-              .append("**activate it first using the `activate_skill` tool** before proceeding. ")
-              .append("Do not attempt to answer or produce deliverables without first loading the skill's instructions.\n");
-        }
+        appendSkillBodies(sb);
         return Optional.of(sb.toString());
+    }
+
+    private void appendSkillBodies(StringBuilder sb) {
+        if (skillsDirectories == null || skillsDirectories.isBlank()) return;
+        for (String dirSpec : skillsDirectories.split(",")) {
+            String trimmed = dirSpec.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("classpath:")) continue;
+            Path root = Path.of(trimmed);
+            if (!Files.isDirectory(root)) continue;
+            try (Stream<Path> entries = Files.list(root)) {
+                entries.filter(Files::isDirectory).sorted().forEach(skillDir -> {
+                    Path skillFile = skillDir.resolve("SKILL.md");
+                    if (Files.isRegularFile(skillFile)) {
+                        try {
+                            sb.append("\n\n---\n\n# Skill: ")
+                              .append(skillDir.getFileName())
+                              .append("\n\n")
+                              .append(Files.readString(skillFile));
+                        } catch (IOException ignored) {
+                        }
+                    }
+                });
+            } catch (IOException ignored) {
+            }
+        }
     }
 }
