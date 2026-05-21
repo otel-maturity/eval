@@ -88,6 +88,19 @@ jobs:
             echo "No previous results for ${PROJECT} — fresh install"
           fi
 
+      - name: Export kind kubeconfig for agents
+        run: |
+          PROJECT="${{ github.event.inputs.project_name }}"
+          # kind writes the kubeconfig to ~/.kube/config by default. Re-export
+          # it explicitly to a dedicated path so we can mount only this file
+          # (not the entire ~/.kube directory) into each agent container.
+          mkdir -p "${{ github.workspace }}/.kube"
+          kind get kubeconfig --name "otel-eval-${PROJECT}" \
+            > "${{ github.workspace }}/.kube/config"
+          chmod 644 "${{ github.workspace }}/.kube/config"
+          echo "── kubeconfig contents (server URL only):"
+          grep -E "server:|name:" "${{ github.workspace }}/.kube/config" || true
+
       - name: Start install-agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -101,9 +114,11 @@ jobs:
             -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
             -e DASH0_DATASET="${DASH0_DATASET}" \
+            -e KUBECONFIG=/root/.kube/config \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp:/tmp \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+            -v ${{ github.workspace }}/.kube/config:/root/.kube/config:ro \
             ghcr.io/${{ github.repository }}/install-agent:latest
 
       - name: Wait for install-agent to be ready
@@ -206,9 +221,11 @@ jobs:
               -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
               -e DASH0_DATASET="${DASH0_DATASET}" \
               -e SERVER_PORT="${port}" \
+              -e KUBECONFIG=/root/.kube/config \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp:/tmp \
               -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
+              -v ${{ github.workspace }}/.kube/config:/root/.kube/config:ro \
               "ghcr.io/${REPO}/${image}:latest"
           }
 
@@ -270,6 +287,7 @@ jobs:
             -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             -e OTEL_EXPORTER_OTLP_HEADERS_API_KEY="${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}" \
             -e DASH0_DATASET="${DASH0_DATASET}" \
+            -e KUBECONFIG=/root/.kube/config \
             -e DIMENSION_1_URL="http://localhost:8081" \
             -e DIMENSION_2_URL="http://localhost:8082" \
             -e DIMENSION_3_URL="http://localhost:8083" \
@@ -281,6 +299,7 @@ jobs:
             -v /tmp:/tmp \
             -v ${{ github.workspace }}/.otel-eval:/app/.otel-eval \
             -v ${{ github.workspace }}/previous-results:/app/results:ro \
+            -v ${{ github.workspace }}/.kube/config:/root/.kube/config:ro \
             ghcr.io/${{ github.repository }}/evaluate-agent:latest
 
       - name: Wait for evaluate-agent to be ready
