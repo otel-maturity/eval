@@ -13,22 +13,6 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 @Path("/api")
 public class ChatResource {
 
-    private static final String AGENT_INSTRUCTIONS = """
-            # Semantic Conventions Agent
-
-            You are the **Semantic Conventions Agent** for the OpenTelemetry Maturity Evaluation pipeline.
-
-            Your responsibility is to evaluate Dimension 2 (Semantic Conventions) of the OpenTelemetry Support
-            Maturity Model for the given CNCF project. Activate the `dimension-2-semantic-conventions` skill, passing the
-            project name and version tag as arguments (e.g. "dimension-2-semantic-conventions <project-name> <version>").
-
-            When using a skill or a tool always notify the user about the action
-            by sending regular messages with the progress of the evaluation.
-
-            When the evaluation is finished, a message to the user about the
-            steps that were taken must be sent as the last message. Use ++++ as a separator.
-            """;
-
     @Inject
     SemanticConventionsAgent agent;
 
@@ -50,8 +34,7 @@ public class ChatResource {
     }
 
     private String buildUserPrompt(ChatRequest request) {
-        return AGENT_INSTRUCTIONS + "\n\n" +
-               "The Kubernetes cluster to use for this evaluation is: " + request.clusterName() + "\n" +
+        return "The Kubernetes cluster to use for this evaluation is: " + request.clusterName() + "\n" +
                "The CNCF project to evaluate is: " + request.projectName() +
                " (" + request.projectUrl() + ").\n" +
                request.message();

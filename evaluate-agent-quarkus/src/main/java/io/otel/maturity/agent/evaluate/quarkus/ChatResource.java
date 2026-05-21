@@ -188,9 +188,6 @@ public class ChatResource {
                                         String d1, String d2, String d3, String d4,
                                         String d5, String d6, String d7) {
         StringBuilder sb = new StringBuilder();
-        sb.append("# Evaluate Agent (Orchestrator)\n\n")
-          .append("You are the **Evaluate Agent** for the OpenTelemetry Maturity Evaluation pipeline.\n\n");
-
         sb.append("Assemble the complete EVALUATION.md for project **")
           .append(request.projectName()).append("** (evaluation run: ").append(version).append(").\n\n");
 

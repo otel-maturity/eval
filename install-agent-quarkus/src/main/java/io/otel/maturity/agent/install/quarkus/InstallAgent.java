@@ -5,12 +5,11 @@ import dev.langchain4j.service.UserMessage;
 import io.otel.maturity.agent.install.quarkus.tools.FileSystemTools;
 import io.otel.maturity.agent.install.quarkus.tools.ShellTools;
 import io.quarkiverse.langchain4j.RegisterAiService;
-import io.quarkiverse.langchain4j.skills.SkillsSystemMessageProvider;
 import io.smallrye.mutiny.Multi;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @RegisterAiService(
-        systemMessageProviderSupplier = SkillsSystemMessageProvider.class,
+        systemMessageProviderSupplier = InstallSystemMessageProvider.class,
         tools = { FileSystemTools.class, ShellTools.class }
 )
 @ApplicationScoped

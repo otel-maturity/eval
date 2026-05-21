@@ -15,31 +15,6 @@ import java.nio.file.Files;
 @Path("/api/chat")
 public class ChatResource {
 
-    private static final String AGENT_INSTRUCTIONS = """
-            # Progress Agent
-
-            You are the **Progress Agent** for the OpenTelemetry Maturity Evaluation pipeline.
-
-            Your responsibility is to track the evolution of a CNCF project's OpenTelemetry \
-            maturity by querying GitHub issues and pull requests listed in the project's \
-            TRACKING.md file. You then produce or update an EVOLUTION.md file that records \
-            this progress in chronological order (newest first).
-
-            The prompt will provide the project name and, when a TRACKING.md exists, its path. \
-            If no TRACKING.md is found, no GitHub queries are needed — report this to the user \
-            and stop.
-
-            TRACK the project's progress using the "track-project-progress" skill. \
-            Follow ALL steps in the skill (SKILL.md). The skill produces ONE file:
-              1. EVOLUTION.md — list of GitHub items ordered by date (newest first)
-
-            When using a skill or a tool always notify the user about the action \
-            by sending regular messages with the progress of the tracking.
-
-            When the EVOLUTION.md is written (or updated), send a final message to the user \
-            summarising the steps taken. Use ++++ as a separator.
-            """;
-
     @Inject
     ProgressAgent agent;
 
@@ -53,7 +28,6 @@ public class ChatResource {
 
     private String buildUserPrompt(ChatRequest request) {
         StringBuilder sb = new StringBuilder();
-        sb.append(AGENT_INSTRUCTIONS).append("\n\n");
         sb.append("The CNCF project to track progress for is: ")
           .append(request.projectName())
           .append(" (").append(request.projectUrl()).append(").\n");
