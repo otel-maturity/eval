@@ -3,7 +3,7 @@
     {
       "name": "dimension-5-multi-signal",
       "source": "ghcr.io/otel-maturity/dimension-5-multi-signal",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "additionalBasePaths": [
         ".claude/skills",
         ".codex/skills",

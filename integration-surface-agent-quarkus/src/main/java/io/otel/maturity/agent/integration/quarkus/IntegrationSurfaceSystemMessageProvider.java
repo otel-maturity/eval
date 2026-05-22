@@ -26,6 +26,13 @@ public class IntegrationSurfaceSystemMessageProvider implements SystemMessagePro
             Your responsibility is to evaluate Dimension 1 (Integration Surface) of the OpenTelemetry Support
             Maturity Model for the given CNCF project. Follow the skill instructions below to perform the evaluation.
 
+            ## Output
+
+            Write your evaluation to `.otel-eval/<project-name>/dim-1-integration-surface.md`
+            (relative to the working directory, which is `/app`). Use the `writeFile` tool.
+            This is the only acceptable output path — do not write to `/tmp` or any other
+            location, or downstream pipeline steps will not find your result.
+
             When using a tool always notify the user about the action
             by sending regular messages with the progress of the evaluation.
 

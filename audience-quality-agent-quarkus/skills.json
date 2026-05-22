@@ -3,7 +3,7 @@
     {
       "name": "dimension-6-audience-signal-quality",
       "source": "ghcr.io/otel-maturity/dimension-6-audience-signal-quality",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "additionalBasePaths": [
         ".claude/skills",
         ".codex/skills",
