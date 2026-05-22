@@ -1,6 +1,6 @@
 spring:
   application:
-    name: evaluate-agent
+    name: dim-4-trace-modeling-agent
   mvc:
     async:
       request-timeout: -1
@@ -55,23 +55,6 @@ management:
           headers:
             Authorization: "Bearer ${OTEL_EXPORTER_OTLP_HEADERS_API_KEY}"
             Dash0-Dataset: "${DASH0_DATASET}"
-
-dimension:
-  agents:
-    1:
-      url: ${DIMENSION_1_URL:http://dim-1-integration-surface-agent:8080}
-    2:
-      url: ${DIMENSION_2_URL:http://dim-2-semantic-conventions-agent:8080}
-    3:
-      url: ${DIMENSION_3_URL:http://dim-3-resource-attributes-agent:8080}
-    4:
-      url: ${DIMENSION_4_URL:http://dim-4-trace-modeling-agent:8080}
-    5:
-      url: ${DIMENSION_5_URL:http://dim-5-multi-signal-agent:8080}
-    6:
-      url: ${DIMENSION_6_URL:http://dim-6-audience-quality-agent:8080}
-    7:
-      url: ${DIMENSION_7_URL:http://dim-7-stability-agent:8080}
 
 server:
   port: 8080

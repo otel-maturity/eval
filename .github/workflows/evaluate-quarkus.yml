@@ -227,13 +227,13 @@ jobs:
               "ghcr.io/${REPO}/${image}:latest"
           }
 
-          run_dim dim1-agent-quarkus 8081 integration-surface-agent-quarkus
-          run_dim dim2-agent-quarkus 8082 semantic-conventions-agent-quarkus
-          run_dim dim3-agent-quarkus 8083 resource-attributes-agent-quarkus
-          run_dim dim4-agent-quarkus 8084 trace-modeling-agent-quarkus
-          run_dim dim5-agent-quarkus 8085 multi-signal-agent-quarkus
-          run_dim dim6-agent-quarkus 8086 audience-quality-agent-quarkus
-          run_dim dim7-agent-quarkus 8087 stability-agent-quarkus
+          run_dim dim1-agent-quarkus 8081 dim-1-integration-surface-agent-quarkus
+          run_dim dim2-agent-quarkus 8082 dim-2-semantic-conventions-agent-quarkus
+          run_dim dim3-agent-quarkus 8083 dim-3-resource-attributes-agent-quarkus
+          run_dim dim4-agent-quarkus 8084 dim-4-trace-modeling-agent-quarkus
+          run_dim dim5-agent-quarkus 8085 dim-5-multi-signal-agent-quarkus
+          run_dim dim6-agent-quarkus 8086 dim-6-audience-quality-agent-quarkus
+          run_dim dim7-agent-quarkus 8087 dim-7-stability-agent-quarkus
 
       - name: Wait for all dimension agents to be ready
         if: steps.check_install.outputs.install_plan_found == 'true'

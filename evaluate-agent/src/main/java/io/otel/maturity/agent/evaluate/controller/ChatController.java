@@ -37,25 +37,25 @@ public class ChatController {
     private final RestClient restClient;
     private final InMemoryChatMemoryRepository memoryRepository = new InMemoryChatMemoryRepository();
 
-    @Value("${dimension.agents.1.url:http://integration-surface-agent:8080}")
+    @Value("${dimension.agents.1.url:http://dim-1-integration-surface-agent:8080}")
     private String dim1Url;
 
-    @Value("${dimension.agents.2.url:http://semantic-conventions-agent:8080}")
+    @Value("${dimension.agents.2.url:http://dim-2-semantic-conventions-agent:8080}")
     private String dim2Url;
 
-    @Value("${dimension.agents.3.url:http://resource-attributes-agent:8080}")
+    @Value("${dimension.agents.3.url:http://dim-3-resource-attributes-agent:8080}")
     private String dim3Url;
 
-    @Value("${dimension.agents.4.url:http://trace-modeling-agent:8080}")
+    @Value("${dimension.agents.4.url:http://dim-4-trace-modeling-agent:8080}")
     private String dim4Url;
 
-    @Value("${dimension.agents.5.url:http://multi-signal-agent:8080}")
+    @Value("${dimension.agents.5.url:http://dim-5-multi-signal-agent:8080}")
     private String dim5Url;
 
-    @Value("${dimension.agents.6.url:http://audience-quality-agent:8080}")
+    @Value("${dimension.agents.6.url:http://dim-6-audience-quality-agent:8080}")
     private String dim6Url;
 
-    @Value("${dimension.agents.7.url:http://stability-agent:8080}")
+    @Value("${dimension.agents.7.url:http://dim-7-stability-agent:8080}")
     private String dim7Url;
 
     public ChatController(ChatClient chatClient) {
